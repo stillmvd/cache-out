@@ -417,10 +417,17 @@ pub fn clean_ff_places(db: &Connection, history: &HashSet<&str>, downloads: &Has
     drop_where(db, "moz_historyvisits_extra", "visit_id", "gone_v")?;
     drop_where(db, "moz_historyvisits", "id", "gone_v")?;
     drop_where(db, "moz_inputhistory", "place_id", "gone_p")?;
+    drop_where(db, "moz_places_metadata", "place_id", "gone_p")?;
+    drop_where(db, "moz_places_metadata", "referrer_place_id", "gone_p")?;
     db.execute_batch(
-        "UPDATE moz_places SET visit_count = 0, last_visit_date = NULL, frecency = 0, recalc_frecency = 1 WHERE id IN (SELECT id FROM temp.gone_p);
+        "UPDATE moz_places SET visit_count = 0, last_visit_date = NULL WHERE id IN (SELECT id FROM temp.gone_p);
          INSERT OR IGNORE INTO temp.touched SELECT id FROM temp.gone_p;",
     )?;
+    for (column, value) in [("frecency", "0"), ("recalc_frecency", "1")] {
+        if has_column(db, "moz_places", column) {
+            db.execute(&format!("UPDATE moz_places SET {column} = {value} WHERE id IN (SELECT id FROM temp.gone_p)"), [])?;
+        }
+    }
     prune_places(db, "touched")
 }
 
@@ -720,7 +727,9 @@ mod tests {
              INSERT INTO moz_historyvisits VALUES (10,1), (11,2), (12,4);
              INSERT INTO moz_anno_attributes VALUES (1,'downloads/destinationFileURI');
              INSERT INTO moz_annos VALUES (1,3,1);
-             INSERT INTO moz_inputhistory VALUES (1,'2ch');",
+             INSERT INTO moz_inputhistory VALUES (1,'2ch');
+             CREATE TABLE moz_places_metadata (id INTEGER PRIMARY KEY, place_id INTEGER, referrer_place_id INTEGER);
+             INSERT INTO moz_places_metadata VALUES (1,2,NULL), (2,4,1), (3,4,NULL);",
         )
         .unwrap();
         let q = |sql: &str| -> String { db.query_row(sql, [], |r| r.get(0)).unwrap() };
@@ -729,6 +738,7 @@ mod tests {
         assert_eq!(q("SELECT group_concat(id) FROM moz_historyvisits"), "12");
         assert_eq!(q("SELECT visit_count || '/' || ifnull(last_visit_date, '-') FROM moz_places WHERE id = 2"), "0/-");
         assert_eq!(q("SELECT count(*) || '' FROM moz_inputhistory"), "0");
+        assert_eq!(q("SELECT group_concat(id) FROM moz_places_metadata"), "3");
         assert_eq!(q("SELECT group_concat(id) FROM moz_origins"), "1,2");
         clean_ff_places(&db, &HashSet::new(), &HashSet::from(["2ch.org"])).unwrap();
         assert_eq!(q("SELECT group_concat(id) FROM moz_places"), "2,4");

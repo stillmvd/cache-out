@@ -92,10 +92,15 @@ pub fn pick_icons(db: &Connection, family: Family) -> rusqlite::Result<HashMap<S
     Ok(out)
 }
 
-fn stamp_of(src: &Path) -> Option<String> {
-    let m = src.metadata().ok()?;
+fn stamp_part(path: &Path) -> Option<String> {
+    let m = path.metadata().ok()?;
     let t = m.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_millis();
     Some(format!("{t}-{}", m.len()))
+}
+
+fn stamp_of(src: &Path) -> Option<String> {
+    let wal = stamp_part(&PathBuf::from(format!("{}-wal", src.display()))).unwrap_or_default();
+    Some(format!("{}|{wal}", stamp_part(src)?))
 }
 
 fn listed(dir: &Path) -> HashMap<String, PathBuf> {
@@ -114,7 +119,7 @@ pub fn write_icons(dir: &Path, icons: &HashMap<String, Vec<u8>>, stamp: &str) ->
     fs::create_dir_all(dir)?;
     for (d, data) in icons {
         if let Some(ext) = ext_of(data) {
-            fs::write(dir.join(file_of(d, ext)), data)?;
+            let _ = fs::write(dir.join(file_of(d, ext)), data);
         }
     }
     fs::write(dir.join(STAMP), stamp)
@@ -198,10 +203,15 @@ mod tests {
         let dir = cache_dir(&root, "chrome", "Profile 1");
         assert_eq!(dir, root.join("chrome").join("Profile_1"));
         let png = b"\x89PNG1".to_vec();
-        let icons = HashMap::from([("vk.ru".to_string(), png.clone()), ("::1".to_string(), b"<svg/>".to_vec()), ("x.org".to_string(), vec![7u8])]);
+        let icons = HashMap::from([
+            ("vk.ru".to_string(), png.clone()),
+            ("::1".to_string(), b"<svg/>".to_vec()),
+            ("x.org".to_string(), vec![7u8]),
+            ("con".to_string(), png.clone()),
+        ]);
         write_icons(&dir, &icons, "s1").unwrap();
         let got = listed(&dir);
-        assert_eq!(got.len(), 2);
+        assert!(got.contains_key("vk.ru") && got.contains_key("::1") && !got.contains_key("x.org"));
         assert_eq!(fs::read(&got["::1"]).unwrap(), b"<svg/>");
         assert!(got["vk.ru"].ends_with("vk.ru.png"));
         write_icons(&dir, &HashMap::from([("ya.ru".to_string(), png)]), "s2").unwrap();

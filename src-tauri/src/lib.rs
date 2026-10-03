@@ -1,6 +1,7 @@
 pub mod browsers;
 pub mod chromium;
 pub mod clean;
+pub mod icons;
 pub mod model;
 pub mod procs;
 pub mod site;
@@ -9,6 +10,8 @@ pub mod vss;
 
 use clean::{CleanError, CleanReport, CleanRequest};
 use model::{Browser, Family, ProfileScan};
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 static CLEANING: Mutex<()> = Mutex::new(());
@@ -42,6 +45,27 @@ async fn scan_profile(browser_id: String, profile_id: String) -> Result<ProfileS
         .map_err(|e| e.to_string())?
 }
 
+pub fn site_icons_blocking(browser_id: &str, profile_id: &str) -> Result<HashMap<String, PathBuf>, String> {
+    let (browser, profile) = browsers::find(browser_id, profile_id).ok_or("Профиль не найден")?;
+    if browser.family != Family::Chromium {
+        return Ok(HashMap::new());
+    }
+    icons::site_icons(&profile.path, &icons::cache_dir(&icons::icons_root(), &browser.id, &profile.id)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn site_icons(browser_id: String, profile_id: String) -> Result<HashMap<String, PathBuf>, String> {
+    tauri::async_runtime::spawn_blocking(move || site_icons_blocking(&browser_id, &profile_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn sweep_icons() {
+    let root = icons::icons_root();
+    let keep = browsers::detect().iter().flat_map(|b| b.profiles.iter().map(|p| icons::cache_dir(&root, &b.id, &p.id))).collect();
+    icons::sweep(&root, &keep);
+}
+
 pub fn clean_blocking(browser_id: &str, profile_id: &str, request: &CleanRequest, close: bool) -> Result<CleanReport, CleanError> {
     let (browser, profile) = browsers::find(browser_id, profile_id).ok_or_else(|| CleanError::before("Профиль не найден"))?;
     if browser.family != Family::Chromium {
@@ -68,8 +92,9 @@ pub fn run() {
     snapshot::sweep_stale();
     vss::sweep_stale();
     clean::sweep_stale();
+    std::thread::spawn(sweep_icons);
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![list_browsers, scan_profile, running_processes, clean_profile])
+        .invoke_handler(tauri::generate_handler![list_browsers, scan_profile, running_processes, clean_profile, site_icons])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

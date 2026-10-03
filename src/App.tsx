@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { cleanProfile, listBrowsers, runningProcesses, scanProfile, type Browser, type CleanError, type CleanReport, type CleanRequest, type Scan } from "./lib/ipc";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { cleanProfile, listBrowsers, runningProcesses, scanProfile, siteIcons, type Browser, type CleanError, type CleanReport, type CleanRequest, type Scan } from "./lib/ipc";
 import { allTotals, pickedKeys, profileRow, siteRow, sortRows, totals, type Key, type Pick, type Picks, type Row, type Sort } from "./lib/rows";
 import { mb } from "./lib/format";
 import { Titlebar } from "./components/Titlebar";
@@ -23,6 +24,7 @@ export default function App() {
   const [browsers, setBrowsers] = useState<Browser[]>([]);
   const [current, setCurrent] = useState<Current | null>(null);
   const [scans, setScans] = useState<Map<string, Scan | string>>(new Map());
+  const [icons, setIcons] = useState<Map<string, Record<string, string>>>(new Map());
   const [scanning, setScanning] = useState<Set<string>>(new Set());
   const [running, setRunning] = useState<Set<string>>(new Set());
   const [picks, setPicks] = useState<Picks>(new Map());
@@ -49,6 +51,7 @@ export default function App() {
   const browser = browsers.find((b) => b.id === current?.browser);
   const shortName = browser?.name.replace(/^(Google|Microsoft) /, "") ?? "";
   const scan = scans.get(key);
+  const siteIconMap = icons.get(key);
   const ready = scan !== undefined && typeof scan !== "string";
   const isScanning = scanning.has(key);
   const isOpen = Boolean(browser && running.has(browser.process));
@@ -95,6 +98,12 @@ export default function App() {
           (s) => {
             setScans((m) => new Map(m).set(k, s));
             if (currentKey.current === k) resetWork();
+            siteIcons(cur.browser, cur.profile)
+              .then((found) => {
+                const src = Object.fromEntries(Object.entries(found).map(([d, p]) => [d, convertFileSrc(p)]));
+                setIcons((m) => new Map(m).set(k, src));
+              })
+              .catch(() => {});
           },
           (e) => setScans((m) => new Map(m).set(k, String(e))),
         )
@@ -408,7 +417,7 @@ export default function App() {
                 ) : (
                   <div className="list-inner" style={{ height: rows.length * STEP + (panel ? 110 : 64) }}>
                     {rows.slice(first, last).map((row, i) => (
-                      <SiteRow key={row.id} row={row} pick={picks.get(row.id)} turbo={turbo} top={(first + i) * STEP} leaving={leaving.has(row.id)} onToggle={toggle} onFire={fire} />
+                      <SiteRow key={row.id} row={row} pick={picks.get(row.id)} turbo={turbo} top={(first + i) * STEP} leaving={leaving.has(row.id)} icon={siteIconMap?.[row.id]} onToggle={toggle} onFire={fire} />
                     ))}
                   </div>
                 )}

@@ -86,18 +86,28 @@ type Props = {
   turbo: boolean;
   top: number;
   leaving: boolean;
+  icon?: string;
   onToggle: (row: Row, target: Target) => void;
   onFire: (row: Row, target: Target) => void;
 };
 
-export const SiteRow = memo(function SiteRow({ row, pick, turbo, top, leaving, onToggle, onFire }: Props) {
+function Fav({ row, icon }: { row: Row; icon?: string }) {
+  const [broken, setBroken] = useState("");
+  if (row.prof) return <BrowserGlyph id={row.glyph ?? "chrome"} />;
+  if (icon && broken !== icon) return <img src={icon} alt="" draggable={false} onError={() => setBroken(icon)} />;
+  return <>{row.title[0]}</>;
+}
+
+export const SiteRow = memo(function SiteRow({ row, pick, turbo, top, leaving, icon, onToggle, onFire }: Props) {
   const keys = pickedKeys(row, pick);
   const all = pick === "all";
   const empty = row.items.every((i) => !i.value);
   return (
     <div className={`rw${row.prof ? " prof" : ""}${leaving ? " leaving" : ""}`} style={{ top }}>
       <span className="who">
-        <span className="fav">{row.prof ? <BrowserGlyph id={row.glyph ?? "chrome"} /> : row.title[0]}</span>
+        <span className="fav">
+          <Fav row={row} icon={icon} />
+        </span>
         <span className="txt">
           <span className="dom">{row.title}</span>
           <span className="sub">{row.sub}</span>

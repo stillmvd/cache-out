@@ -19,6 +19,7 @@ export type Scan = { sites: Site[]; cacheBytes: number; forms: FormField[]; addr
 export const listBrowsers = () => invoke<Browser[]>("list_browsers");
 export const scanProfile = (browserId: string, profileId: string) => invoke<Scan>("scan_profile", { browserId, profileId });
 export const runningProcesses = () => invoke<string[]>("running_processes");
+export const siteIcons = (browserId: string, profileId: string) => invoke<Record<string, string>>("site_icons", { browserId, profileId });
 
 export type CleanRequest = { sites: Record<string, string[]>; profile: string[] };
 export type CleanReport = { freedBytes: number; backup: string | null };

@@ -240,12 +240,9 @@ export default function App() {
         busy.current -= 1;
       }
       dirty.current.add(k);
-      const freedText = report.freedBytes > 0 ? `освобождено ${mb(report.freedBytes)}` : "очищено";
       const synced = scan && typeof scan !== "string" && scan.sync && [...done.values()].some((keys) => keys.has("c") || keys.has("h"));
-      const parts = [`Готово: ${freedText}`];
-      if (report.backup) parts.push("удалённое хранится 7 дней в копии");
-      if (synced) parts.push(`в ${shortName} включена синхронизация — история и входы могут вернуться с других устройств`);
-      setToast(parts.join(" · "));
+      const head = report.freedBytes > 0 ? `Очищено ${mb(report.freedBytes)}` : "Очищено";
+      setToast(synced ? `${head}\nСинхронизация ${shortName} может вернуть историю и входы` : head);
       if (currentKey.current !== k) return;
       setCleared((prev) => {
         const next = new Map(prev);
@@ -312,6 +309,11 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [asking, picks, query, clean, current, rescan]);
 
+  const slots = useMemo(() => {
+    let count = 0;
+    const at = rows.map((r) => (leaving.has(r.id) ? count : count++));
+    return { at, count };
+  }, [rows, leaving]);
   const first = Math.max(0, Math.floor(scrollTop / STEP) - 4);
   const last = Math.min(rows.length, Math.ceil((scrollTop + viewH) / STEP) + 4);
   const panel = t.items > 0 && !turbo;
@@ -419,9 +421,9 @@ export default function App() {
                     <span>Поиск идёт по домену.</span>
                   </div>
                 ) : (
-                  <div className="list-inner" style={{ height: rows.length * STEP + (panel ? 110 : 64) }}>
+                  <div className={`list-inner${leaving.size ? " shifting" : ""}`} style={{ height: slots.count * STEP + (panel ? 110 : 64) }}>
                     {rows.slice(first, last).map((row, i) => (
-                      <SiteRow key={row.id} row={row} pick={picks.get(row.id)} turbo={turbo} top={(first + i) * STEP} leaving={leaving.has(row.id)} icon={siteIconMap?.[row.id]} onToggle={toggle} onFire={fire} />
+                      <SiteRow key={row.id} row={row} pick={picks.get(row.id)} turbo={turbo} top={slots.at[first + i] * STEP} leaving={leaving.has(row.id)} icon={siteIconMap?.[row.id]} onToggle={toggle} onFire={fire} />
                     ))}
                   </div>
                 )}
@@ -432,7 +434,9 @@ export default function App() {
           {panel && <TotalsPanel t={t} all={all} browserName={shortName} onClean={clean} />}
           {toast && (
             <div className="toast" role="status">
-              <span>{toast}</span>
+              {toast.split("\n").map((line, i) => (
+                <span key={i}>{line}</span>
+              ))}
             </div>
           )}
         </section>

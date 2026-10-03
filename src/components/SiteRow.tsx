@@ -103,7 +103,7 @@ export const SiteRow = memo(function SiteRow({ row, pick, turbo, top, leaving, i
   const all = pick === "all";
   const empty = row.items.every((i) => !i.value);
   return (
-    <div className={`rw${row.prof ? " prof" : ""}${leaving ? " leaving" : ""}`} style={{ top }}>
+    <div className={`rw${row.prof ? " prof" : ""}${leaving ? " leaving" : ""}`} style={{ transform: `translateY(${top}px)` }}>
       <span className="who">
         <span className="fav">
           <Fav row={row} icon={icon} />

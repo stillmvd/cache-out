@@ -15,21 +15,21 @@ pub fn cookies_db(profile: &Path) -> Option<PathBuf> {
 }
 
 #[derive(Default)]
-struct Sites(HashMap<String, Site>);
+pub(crate) struct Sites(pub HashMap<String, Site>);
 
 impl Sites {
-    fn at(&mut self, domain: String) -> &mut Site {
+    pub(crate) fn at(&mut self, domain: String) -> &mut Site {
         self.0.entry(domain.clone()).or_insert_with(|| Site { domain, ..Default::default() })
     }
 }
 
-fn bump(slot: &mut Option<i64>, t: Option<i64>) {
+pub(crate) fn bump(slot: &mut Option<i64>, t: Option<i64>) {
     if t > *slot {
         *slot = t;
     }
 }
 
-fn open(snap: &Snapshot, src: &Path, label: &str, locked: &mut Vec<String>) -> Option<Connection> {
+pub(crate) fn open(snap: &Snapshot, src: &Path, label: &str, locked: &mut Vec<String>) -> Option<Connection> {
     if !src.is_file() {
         return None;
     }

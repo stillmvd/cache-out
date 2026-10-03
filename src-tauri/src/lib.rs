@@ -1,6 +1,7 @@
 pub mod browsers;
 pub mod chromium;
 pub mod clean;
+pub mod firefox;
 pub mod icons;
 pub mod localstorage;
 pub mod model;
@@ -34,9 +35,10 @@ async fn running_processes() -> Vec<String> {
 pub fn scan_profile_blocking(browser_id: &str, profile_id: &str) -> Result<ProfileScan, String> {
     let (browser, profile) = browsers::find(browser_id, profile_id).ok_or("Профиль не найден")?;
     match browser.family {
-        Family::Chromium => chromium::scan(&profile.path).map_err(|e| e.to_string()),
-        Family::Firefox => Err("Firefox пока не поддерживается".into()),
+        Family::Chromium => chromium::scan(&profile.path),
+        Family::Firefox => firefox::scan(&profile.path),
     }
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

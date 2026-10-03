@@ -68,7 +68,7 @@ pub fn open_site_blocking(browser_id: &str, profile_id: &str, domain: &str) -> R
     let exe = open::browser_exe(&browser, &profile).ok_or_else(|| format!("Не нашёл, где установлен {}", browser.name))?;
     let url = open::site_url(domain);
     let args = open::launch_args(&browser, &profile, &url);
-    open::launch_as_user(&exe, &args, &url).map_err(|e| format!("Не удалось открыть {domain}: {e}"))
+    open::launch_as_user(&exe, &args).map_err(|e| format!("Не удалось открыть {domain}: {e}"))
 }
 
 #[tauri::command]

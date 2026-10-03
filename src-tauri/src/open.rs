@@ -62,16 +62,86 @@ fn is_elevated() -> bool {
     }
 }
 
+pub fn command_line(exe: &Path, args: &[String]) -> String {
+    std::iter::once(exe.display().to_string())
+        .chain(args.iter().cloned())
+        .map(|a| if a.is_empty() || a.contains(' ') { format!("\"{a}\"") } else { a })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[cfg(windows)]
-pub fn launch_as_user(exe: &Path, args: &[String], url: &str) -> io::Result<()> {
+fn spawn_with_shell_token(exe: &Path, args: &[String]) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::Security::{
+        DuplicateTokenEx, SecurityImpersonation, TokenPrimary, TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_SESSIONID, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_QUERY,
+    };
+    use windows_sys::Win32::System::Threading::{
+        CreateProcessWithTokenW, OpenProcess, OpenProcessToken, PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, STARTUPINFOW,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetShellWindow, GetWindowThreadProcessId};
+    let wide = |s: &std::ffi::OsStr| s.encode_wide().chain(Some(0)).collect::<Vec<u16>>();
+    let app = wide(exe.as_os_str());
+    let mut line = wide(command_line(exe, args).as_ref());
+    let dir = exe.parent().map(|d| wide(d.as_os_str()));
+    unsafe {
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(GetShellWindow(), &mut pid);
+        if pid == 0 {
+            return Err(io::Error::other("не найден рабочий стол Windows"));
+        }
+        let shell = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if shell.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        let mut token: HANDLE = std::ptr::null_mut();
+        let opened = OpenProcessToken(shell, TOKEN_DUPLICATE, &mut token);
+        CloseHandle(shell);
+        if opened == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut primary: HANDLE = std::ptr::null_mut();
+        let access = TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY | TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_SESSIONID;
+        let duplicated = DuplicateTokenEx(token, access, std::ptr::null(), SecurityImpersonation, TokenPrimary, &mut primary);
+        CloseHandle(token);
+        if duplicated == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let si = STARTUPINFOW { cb: std::mem::size_of::<STARTUPINFOW>() as u32, ..std::mem::zeroed() };
+        let mut pi: PROCESS_INFORMATION = std::mem::zeroed();
+        let created = CreateProcessWithTokenW(
+            primary,
+            0,
+            app.as_ptr(),
+            line.as_mut_ptr(),
+            0,
+            std::ptr::null(),
+            dir.as_ref().map_or(std::ptr::null(), |d| d.as_ptr()),
+            &si,
+            &mut pi,
+        );
+        let error = io::Error::last_os_error();
+        CloseHandle(primary);
+        if created == 0 {
+            return Err(error);
+        }
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+pub fn launch_as_user(exe: &Path, args: &[String]) -> io::Result<()> {
     if !is_elevated() {
         return Command::new(exe).args(args).spawn().map(|_| ());
     }
-    hidden("explorer.exe", &[url]).spawn().map(|_| ())
+    spawn_with_shell_token(exe, args)
 }
 
 #[cfg(not(windows))]
-pub fn launch_as_user(exe: &Path, args: &[String], _url: &str) -> io::Result<()> {
+pub fn launch_as_user(exe: &Path, args: &[String]) -> io::Result<()> {
     Command::new(exe).args(args).spawn().map(|_| ())
 }
 
@@ -91,5 +161,12 @@ mod tests {
         let out = "\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe\r\n    (Default)    REG_SZ    C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe\r\n";
         assert_eq!(parse_reg_default(out), Some(PathBuf::from(r"C:\Program Files\Google\Chrome\Application\chrome.exe")));
         assert_eq!(parse_reg_default("ERROR"), None);
+    }
+
+    #[test]
+    fn quotes_args_with_spaces() {
+        let exe = Path::new(r"C:\Program Files\Google\Chrome\Application\chrome.exe");
+        let args = ["--profile-directory=Profile 1".to_string(), "https://ya.ru/".to_string()];
+        assert_eq!(command_line(exe, &args), r#""C:\Program Files\Google\Chrome\Application\chrome.exe" "--profile-directory=Profile 1" https://ya.ru/"#);
     }
 }

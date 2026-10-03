@@ -1,0 +1,16 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+*.log
+.env*
+Thumbs.db
+.vscode/
+.idea/
+HANDOFF.md
+
+brand/logo/png/
+brand/**/__pycache__/
+brand/concepts/*-sheet.*
+brand/concepts/logo-page.html
+brand/concepts/v2/*.bak.html

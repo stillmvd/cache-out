@@ -234,6 +234,37 @@ pub fn clean_history(db: &Connection, sites: &HashSet<&str>) -> rusqlite::Result
     drop_where(db, "urls", "id", "gone_u")
 }
 
+pub fn clean_shortcuts(db: &Connection, sites: &HashSet<&str>) -> rusqlite::Result<()> {
+    if !has_table(db, "omni_box_shortcuts") {
+        return Ok(());
+    }
+    mark(db, "gone_sc", &matching(db, "SELECT rowid, url FROM omni_box_shortcuts", sites, site_of_url)?)?;
+    db.execute("DELETE FROM omni_box_shortcuts WHERE rowid IN (SELECT id FROM temp.gone_sc)", []).map(|_| ())
+}
+
+pub fn clean_top_sites(db: &Connection, sites: &HashSet<&str>) -> rusqlite::Result<()> {
+    if !has_table(db, "top_sites") {
+        return Ok(());
+    }
+    mark(db, "gone_ts", &matching(db, "SELECT rowid, url FROM top_sites", sites, site_of_url)?)?;
+    db.execute_batch(
+        "DELETE FROM top_sites WHERE rowid IN (SELECT id FROM temp.gone_ts);
+         UPDATE top_sites SET url_rank = (SELECT COUNT(*) FROM top_sites t WHERE t.url_rank < top_sites.url_rank);",
+    )
+}
+
+pub fn clean_favicons(db: &Connection, sites: &HashSet<&str>) -> rusqlite::Result<()> {
+    if !has_table(db, "icon_mapping") {
+        return Ok(());
+    }
+    mark(db, "gone_im", &matching(db, "SELECT id, page_url FROM icon_mapping", sites, site_of_url)?)?;
+    db.execute_batch(
+        "DELETE FROM icon_mapping WHERE id IN (SELECT id FROM temp.gone_im);
+         DELETE FROM favicon_bitmaps WHERE icon_id NOT IN (SELECT icon_id FROM icon_mapping WHERE icon_id IS NOT NULL);
+         DELETE FROM favicons WHERE id NOT IN (SELECT icon_id FROM icon_mapping WHERE icon_id IS NOT NULL);",
+    )
+}
+
 pub fn clean_downloads(db: &Connection, sites: &HashSet<&str>) -> rusqlite::Result<()> {
     if !has_table(db, "downloads") {
         return Ok(());
@@ -301,6 +332,19 @@ fn run(profile: &Path, req: &CleanRequest, backup: &mut Backup) -> Result<u64, S
         step("Копия истории", backup.copy_db(&path))?;
         let mut db = step("История", open(&path))?;
         step("История", in_tx(&mut db, |db| clean_history(db, &history).and_then(|_| clean_downloads(db, &downloads))))?;
+    }
+
+    if !history.is_empty() {
+        let traces: [(&str, fn(&Connection, &HashSet<&str>) -> rusqlite::Result<()>); 3] =
+            [("Shortcuts", clean_shortcuts), ("Top Sites", clean_top_sites), ("Favicons", clean_favicons)];
+        for (file, work) in traces {
+            let path = profile.join(file);
+            if path.is_file() {
+                step("Копия истории", backup.copy_db(&path))?;
+                let mut db = step("История", open(&path))?;
+                step("История", in_tx(&mut db, |db| work(db, &history)))?;
+            }
+        }
     }
 
     let forms = req.profile.contains(&Key::Forms);
@@ -781,6 +825,34 @@ mod tests {
         assert_eq!(r.freed_bytes, 2 + 1);
         assert!(!site.exists());
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn history_traces_are_removed_per_site() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE omni_box_shortcuts (id VARCHAR PRIMARY KEY, text VARCHAR, url VARCHAR);
+             INSERT INTO omni_box_shortcuts VALUES ('a','jut','https://jutsu.love/x'), ('b','vk','https://vk.com/');
+             CREATE TABLE top_sites (url TEXT PRIMARY KEY, url_rank INTEGER, title TEXT);
+             INSERT INTO top_sites VALUES ('https://vk.com/',0,''), ('https://www.jutsu.love/',1,''), ('https://ya.ru/',2,'');
+             CREATE TABLE icon_mapping (id INTEGER PRIMARY KEY, page_url TEXT, icon_id INTEGER);
+             CREATE TABLE favicons (id INTEGER PRIMARY KEY, url TEXT);
+             CREATE TABLE favicon_bitmaps (id INTEGER PRIMARY KEY, icon_id INTEGER);
+             INSERT INTO icon_mapping VALUES (1,'https://jutsu.love/a',10), (2,'https://vk.com/',20), (3,'https://jutsu.love/b',30), (4,'https://ya.ru/',30);
+             INSERT INTO favicons VALUES (10,'j'), (20,'v'), (30,'shared');
+             INSERT INTO favicon_bitmaps VALUES (1,10), (2,20), (3,30);",
+        )
+        .unwrap();
+        let sites = HashSet::from(["jutsu.love"]);
+        clean_shortcuts(&db, &sites).unwrap();
+        clean_top_sites(&db, &sites).unwrap();
+        clean_favicons(&db, &sites).unwrap();
+        let q = |sql: &str| -> String { db.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(q("SELECT group_concat(id) FROM omni_box_shortcuts"), "b");
+        assert_eq!(q("SELECT group_concat(url || url_rank, ' ') FROM (SELECT * FROM top_sites ORDER BY url_rank)"), "https://vk.com/0 https://ya.ru/1");
+        assert_eq!(q("SELECT group_concat(id) FROM icon_mapping"), "2,4");
+        assert_eq!(q("SELECT group_concat(id) FROM favicons"), "20,30");
+        assert_eq!(q("SELECT group_concat(icon_id) FROM favicon_bitmaps"), "20,30");
     }
 
     #[test]

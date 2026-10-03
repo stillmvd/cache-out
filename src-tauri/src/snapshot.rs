@@ -25,11 +25,26 @@ impl Snapshot {
     }
 
     pub fn copy_db(&self, src: &Path) -> io::Result<PathBuf> {
-        match self.copy_from(src, src) {
+        self.copy_into(src, &self.dir)
+    }
+
+    pub fn copy_dir(&self, src: &Path, name: &str) -> io::Result<PathBuf> {
+        let dst = self.dir.join(name);
+        fs::create_dir_all(&dst)?;
+        for e in fs::read_dir(src)?.flatten() {
+            if e.file_type()?.is_file() && e.file_name() != "LOCK" {
+                self.copy_into(&e.path(), &dst)?;
+            }
+        }
+        Ok(dst)
+    }
+
+    fn copy_into(&self, src: &Path, dir: &Path) -> io::Result<PathBuf> {
+        match self.copy_from(src, src, dir) {
             Err(e) if is_locked(&e) => {
                 let shadow = self.shadow.get_or_init(|| vss::volume_of(src).and_then(|v| Shadow::create(&v).ok()));
                 let from = shadow.as_ref().filter(|s| s.covers(src)).and_then(|s| s.path(src)).ok_or(e)?;
-                self.copy_from(&from, src)
+                self.copy_from(&from, src, dir)
             }
             r => r,
         }
@@ -39,9 +54,9 @@ impl Snapshot {
         matches!(self.shadow.get(), Some(Some(_)))
     }
 
-    fn copy_from(&self, from: &Path, original: &Path) -> io::Result<PathBuf> {
+    fn copy_from(&self, from: &Path, original: &Path, dir: &Path) -> io::Result<PathBuf> {
         let name = original.file_name().ok_or_else(|| io::Error::other("bad path"))?;
-        let dst = self.dir.join(name);
+        let dst = dir.join(name);
         fs::copy(from, &dst)?;
         for ext in ["-wal", "-journal"] {
             let side = PathBuf::from(format!("{}{}", from.display(), ext));

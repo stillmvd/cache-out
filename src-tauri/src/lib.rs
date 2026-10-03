@@ -2,6 +2,7 @@ pub mod browsers;
 pub mod chromium;
 pub mod clean;
 pub mod icons;
+pub mod localstorage;
 pub mod model;
 pub mod procs;
 pub mod site;

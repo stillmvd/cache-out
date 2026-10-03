@@ -18,3 +18,4 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 psl = "2"
 url = "2"
 base64 = "0.22"
+rusty-leveldb = "4.0.1"

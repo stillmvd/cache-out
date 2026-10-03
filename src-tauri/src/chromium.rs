@@ -1,3 +1,4 @@
+use crate::localstorage;
 use crate::model::{FormField, ProfileScan, Site};
 use crate::site::{chrome_time_ms, site_of_host, site_of_origin, site_of_url};
 use crate::snapshot::{dir_size, Snapshot};
@@ -110,7 +111,30 @@ pub fn sw_cache_dirs(profile: &Path) -> Vec<(String, PathBuf)> {
         .collect()
 }
 
+pub fn local_storage_dir(profile: &Path) -> PathBuf {
+    profile.join("Local Storage").join("leveldb")
+}
+
+fn read_local_storage(profile: &Path, snap: &Snapshot, sites: &mut Sites, locked: &mut Vec<String>) {
+    let src = local_storage_dir(profile);
+    if !src.is_dir() {
+        return;
+    }
+    let Ok(raw) = snap.copy_dir(&src, "local-storage").and_then(|d| localstorage::site_sizes(&d)) else {
+        locked.push("Local Storage".into());
+        return;
+    };
+    let total: u64 = raw.values().sum();
+    let disk = dir_size(&src);
+    for (d, n) in raw {
+        if total > 0 && n > 0 {
+            sites.at(d).storage_bytes += (n as u128 * disk as u128 / total as u128) as u64;
+        }
+    }
+}
+
 fn read_storage(profile: &Path, snap: &Snapshot, sites: &mut Sites, locked: &mut Vec<String>) {
+    read_local_storage(profile, snap, sites, locked);
     for (d, dir) in sw_cache_dirs(profile) {
         let size = dir_size(&dir);
         if size > 0 {

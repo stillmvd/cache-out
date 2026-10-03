@@ -1,4 +1,5 @@
-use crate::chromium::{cookies_db, has_table, indexeddb_origin, sw_cache_dirs, CACHE_DIRS, DOWNLOAD_URL};
+use crate::chromium::{cookies_db, has_table, indexeddb_origin, local_storage_dir, sw_cache_dirs, CACHE_DIRS, DOWNLOAD_URL};
+use crate::localstorage;
 use crate::site::{site_of_host, site_of_origin, site_of_url};
 use crate::snapshot::dir_size;
 use rusqlite::Connection;
@@ -89,6 +90,11 @@ impl Backup<'_> {
             }
         }
         Ok(())
+    }
+
+    fn copy_dir(&mut self, src: &Path) -> io::Result<()> {
+        let dst = self.target(src)?;
+        copy_tree(src, &dst)
     }
 
     fn take(&mut self, src: &Path) -> io::Result<u64> {
@@ -309,6 +315,11 @@ fn run(profile: &Path, req: &CleanRequest, backup: &mut Backup) -> Result<u64, S
         }
     }
 
+    let ls = local_storage_dir(profile);
+    if !storage.is_empty() && ls.is_dir() {
+        step("Local Storage", localstorage::delete_sites(&ls, &storage, || backup.copy_dir(&ls)))?;
+    }
+
     let web = profile.join("WebStorage");
     let quota = web.join("QuotaManager");
     if quota.is_file() && !(storage.is_empty() && site_cache.is_empty()) {
@@ -454,6 +465,11 @@ mod tests {
                  INSERT INTO buckets VALUES (1,'https://www.google.com/'), (2,'https://vk.com/'), (3,'https://mail.google.com/');",
             )
             .unwrap();
+        let mut ls = rusty_leveldb::DB::open(local_storage_dir(p), rusty_leveldb::Options::default()).unwrap();
+        ls.put(b"META:https://www.google.com", b"m").unwrap();
+        ls.put(b"_https://www.google.com\x00\x01k", b"g").unwrap();
+        ls.put(b"_https://vk.com\x00\x01k", b"v").unwrap();
+        ls.close().unwrap();
         let sw = p.join("Service Worker").join("CacheStorage");
         fs::create_dir_all(sw.join("aa").join("c1")).unwrap();
         fs::write(sw.join("aa").join("index.txt"), b"\x0a\x00https://www.google.com/\x12").unwrap();
@@ -496,6 +512,9 @@ mod tests {
         assert!(!p.join("Service Worker").join("CacheStorage").join("aa").exists());
         assert!(p.join("Service Worker").join("CacheStorage").join("bb").exists());
         assert_eq!(report.freed_bytes, 12 + 28);
+        let ls = localstorage::site_sizes(&local_storage_dir(&p)).unwrap();
+        assert!(!ls.contains_key("google.com"));
+        assert!(ls.contains_key("vk.com"));
 
         let bk = report.backup.unwrap();
         assert_eq!(count(&bk.join("Network").join("Cookies"), "SELECT COUNT(*) FROM cookies"), 3);
@@ -503,6 +522,7 @@ mod tests {
         assert!(bk.join("IndexedDB").join("https_mail.google.com_0.indexeddb.leveldb").join("000.log").exists());
         assert!(bk.join("WebStorage").join("1").join("IndexedDB").join("i").exists());
         assert!(!bk.join("WebStorage").join("1").join("CacheStorage").exists());
+        assert!(localstorage::site_sizes(&local_storage_dir(&bk)).unwrap().contains_key("google.com"));
         fs::remove_dir_all(&root).unwrap();
     }
 

@@ -9,7 +9,16 @@ pub fn site_of_host(host: &str) -> Option<String> {
     if host.parse::<IpAddr>().is_ok() || !host.contains('.') {
         return Some(host.to_string());
     }
-    Some(psl::domain_str(host).unwrap_or(host).to_string())
+    Some(icann_domain(host).or_else(|| psl::domain_str(host).map(String::from)).unwrap_or_else(|| host.to_string()))
+}
+
+fn icann_domain(host: &str) -> Option<String> {
+    let labels: Vec<&str> = host.split('.').collect();
+    (0..labels.len().saturating_sub(1)).find_map(|i| {
+        let rest = labels[i + 1..].join(".");
+        let suffix = psl::suffix(rest.as_bytes())?;
+        (suffix.as_bytes() == rest.as_bytes() && suffix.typ() == Some(psl::Type::Icann)).then(|| labels[i..].join("."))
+    })
 }
 
 pub fn site_of_url(raw: &str) -> Option<String> {
@@ -36,6 +45,9 @@ mod tests {
     fn groups_by_registrable_domain() {
         assert_eq!(site_of_host(".accounts.google.com").as_deref(), Some("google.com"));
         assert_eq!(site_of_host("www.bbc.co.uk").as_deref(), Some("bbc.co.uk"));
+        assert_eq!(site_of_host("someone.blogspot.com").as_deref(), Some("blogspot.com"));
+        assert_eq!(site_of_host("stillmvd.github.io").as_deref(), Some("github.io"));
+        assert_eq!(site_of_host("router.lan").as_deref(), Some("router.lan"));
         assert_eq!(site_of_host("localhost").as_deref(), Some("localhost"));
         assert_eq!(site_of_host("192.168.3.1").as_deref(), Some("192.168.3.1"));
         assert_eq!(site_of_host(""), None);

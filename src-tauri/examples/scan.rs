@@ -14,6 +14,7 @@ fn main() {
         Ok(s) => {
             println!("\n{} / {} — {} сайтов, кеш {}, полей форм {}, адресов {}, занято: {:?}, теневая копия: {}, {:?}",
                 b.name, p.name, s.sites.len(), mb(s.cache_bytes), s.forms.len(), s.addresses, s.locked, s.from_shadow, t.elapsed());
+            println!("кеш сайтов всего {}, хранилище всего {}", mb(s.sites.iter().map(|x| x.site_cache_bytes).sum()), mb(s.sites.iter().map(|x| x.storage_bytes).sum()));
             let mut top = s.sites.clone();
             top.sort_by_key(|x| std::cmp::Reverse(x.storage_bytes + x.cookies as u64 * 1000 + x.visits as u64 * 1000));
             for x in top.iter().take(8) {

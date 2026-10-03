@@ -1,4 +1,4 @@
-use crate::chromium::{cookies_db, has_table, indexeddb_origin, CACHE_DIRS, DOWNLOAD_URL};
+use crate::chromium::{cookies_db, has_table, indexeddb_origin, sw_cache_dirs, CACHE_DIRS, DOWNLOAD_URL};
 use crate::site::{site_of_host, site_of_origin, site_of_url};
 use crate::snapshot::dir_size;
 use rusqlite::Connection;
@@ -354,6 +354,14 @@ fn run(profile: &Path, req: &CleanRequest, backup: &mut Backup) -> Result<u64, S
         }
     }
 
+    if !site_cache.is_empty() {
+        for (domain, dir) in sw_cache_dirs(profile) {
+            if site_cache.contains(domain.as_str()) {
+                freed += step("Кеш сайта", remove(&dir))?;
+            }
+        }
+    }
+
     if req.profile.contains(&Key::BrowserCache) {
         for d in CACHE_DIRS {
             freed += step("Кеш браузера", remove(&profile.join(d)))?;
@@ -446,6 +454,12 @@ mod tests {
                  INSERT INTO buckets VALUES (1,'https://www.google.com/'), (2,'https://vk.com/'), (3,'https://mail.google.com/');",
             )
             .unwrap();
+        let sw = p.join("Service Worker").join("CacheStorage");
+        fs::create_dir_all(sw.join("aa").join("c1")).unwrap();
+        fs::write(sw.join("aa").join("index.txt"), b"\x0a\x00https://www.google.com/\x12").unwrap();
+        fs::write(sw.join("aa").join("c1").join("d"), b"12").unwrap();
+        fs::create_dir_all(sw.join("bb")).unwrap();
+        fs::write(sw.join("bb").join("index.txt"), b"\x00https://vk.com/\x00").unwrap();
         fs::create_dir_all(p.join("Cache").join("Cache_Data")).unwrap();
         fs::write(p.join("Cache").join("Cache_Data").join("f"), b"1234567").unwrap();
     }
@@ -479,7 +493,9 @@ mod tests {
         assert_eq!(count(&p.join("WebStorage").join("QuotaManager"), "SELECT COUNT(*) FROM buckets"), 1);
         assert_eq!(count(&p.join("Web Data"), "SELECT COUNT(*) FROM autofill"), 1);
         assert!(p.join("Cache").exists());
-        assert_eq!(report.freed_bytes, 12);
+        assert!(!p.join("Service Worker").join("CacheStorage").join("aa").exists());
+        assert!(p.join("Service Worker").join("CacheStorage").join("bb").exists());
+        assert_eq!(report.freed_bytes, 12 + 28);
 
         let bk = report.backup.unwrap();
         assert_eq!(count(&bk.join("Network").join("Cookies"), "SELECT COUNT(*) FROM cookies"), 3);
@@ -498,6 +514,7 @@ mod tests {
         clean_profile(&p, &req(&[("google.com", &[Key::Storage])], &[]), root.join("bk")).unwrap();
         let b1 = p.join("WebStorage").join("1");
         assert!(b1.join("CacheStorage").join("c").exists());
+        assert!(p.join("Service Worker").join("CacheStorage").join("aa").exists());
         assert!(!b1.join("IndexedDB").exists());
         assert_eq!(count(&p.join("WebStorage").join("QuotaManager"), "SELECT SUM(id) FROM buckets"), 3);
         assert_eq!(count(&p.join("History"), "SELECT COUNT(*) FROM urls"), 2);

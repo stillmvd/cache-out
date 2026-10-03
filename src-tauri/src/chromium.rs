@@ -89,7 +89,34 @@ pub fn indexeddb_origin(dir_name: &str) -> Option<String> {
     Some(format!("{scheme}://{host}{port}"))
 }
 
+pub fn cache_storage_origin(index: &[u8]) -> Option<String> {
+    let start = [b"https://".as_slice(), b"http://".as_slice()]
+        .iter()
+        .filter_map(|p| index.windows(p.len()).position(|w| w == *p))
+        .min()?;
+    let end = index[start..].iter().position(|b| !(0x21..=0x7e).contains(b)).map_or(index.len(), |n| start + n);
+    String::from_utf8(index[start..end].to_vec()).ok()
+}
+
+pub fn sw_cache_dirs(profile: &Path) -> Vec<(String, PathBuf)> {
+    fs::read_dir(profile.join("Service Worker").join("CacheStorage"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let index = fs::read(e.path().join("index.txt")).ok()?;
+            Some((cache_storage_origin(&index).and_then(|o| site_of_origin(&o))?, e.path()))
+        })
+        .collect()
+}
+
 fn read_storage(profile: &Path, snap: &Snapshot, sites: &mut Sites, locked: &mut Vec<String>) {
+    for (d, dir) in sw_cache_dirs(profile) {
+        let size = dir_size(&dir);
+        if size > 0 {
+            sites.at(d).site_cache_bytes += size;
+        }
+    }
     for e in fs::read_dir(profile.join("IndexedDB")).into_iter().flatten().flatten() {
         let name = e.file_name().to_string_lossy().to_string();
         if let Some(d) = indexeddb_origin(&name).and_then(|o| site_of_url(&o)) {
@@ -175,6 +202,14 @@ mod tests {
         assert_eq!(indexeddb_origin("http_localhost_5173.indexeddb.blob").as_deref(), Some("http://localhost:5173"));
         assert_eq!(indexeddb_origin("chrome-extension_abc_0.indexeddb.leveldb").as_deref(), Some("chrome-extension://abc"));
         assert_eq!(indexeddb_origin("LOCK"), None);
+    }
+
+    #[test]
+    fn reads_origin_from_cache_storage_index() {
+        let index = b"\x0a\x47\x0a\x07cachify\x12$b6da\x1a\x02\x28\x00\x3a\x00https://lolz.live/\x12\x12https://lolz.live/ u(";
+        assert_eq!(cache_storage_origin(index).as_deref(), Some("https://lolz.live/"));
+        assert_eq!(cache_storage_origin(b"\x00\x01http://localhost:5173/\x00").as_deref(), Some("http://localhost:5173/"));
+        assert_eq!(cache_storage_origin(b"no origin here"), None);
     }
 
     #[test]

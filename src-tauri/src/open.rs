@@ -5,9 +5,6 @@ use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
-
 pub fn site_url(domain: &str) -> String {
     let local = domain.parse::<IpAddr>().is_ok() || !domain.contains('.');
     format!("{}://{domain}/", if local { "http" } else { "https" })
@@ -66,30 +63,15 @@ fn is_elevated() -> bool {
 }
 
 #[cfg(windows)]
-fn short_path(p: &str) -> Option<String> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Storage::FileSystem::GetShortPathNameW;
-    if !p.contains(' ') {
-        return Some(p.to_string());
-    }
-    let wide: Vec<u16> = std::ffi::OsStr::new(p).encode_wide().chain(Some(0)).collect();
-    let mut buf = vec![0u16; 1024];
-    let n = unsafe { GetShortPathNameW(wide.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) } as usize;
-    Some(String::from_utf16_lossy(&buf[..n])).filter(|s| n > 0 && n < buf.len() && !s.contains(' '))
-}
-
-#[cfg(windows)]
-pub fn launch_as_user(exe: &Path, args: &[String]) -> io::Result<()> {
+pub fn launch_as_user(exe: &Path, args: &[String], url: &str) -> io::Result<()> {
     if !is_elevated() {
         return Command::new(exe).args(args).spawn().map(|_| ());
     }
-    let parts: Option<Vec<String>> = std::iter::once(exe.display().to_string()).chain(args.iter().cloned()).map(|a| short_path(&a)).collect();
-    let line = parts.ok_or_else(|| io::Error::other("путь с пробелами без короткого имени"))?.join(" ");
-    hidden("runas", &[]).raw_arg("/trustlevel:0x20000").raw_arg(format!("\"{line}\"")).spawn().map(|_| ())
+    hidden("explorer.exe", &[url]).spawn().map(|_| ())
 }
 
 #[cfg(not(windows))]
-pub fn launch_as_user(exe: &Path, args: &[String]) -> io::Result<()> {
+pub fn launch_as_user(exe: &Path, args: &[String], _url: &str) -> io::Result<()> {
     Command::new(exe).args(args).spawn().map(|_| ())
 }
 

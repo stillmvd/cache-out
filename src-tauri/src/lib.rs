@@ -64,8 +64,9 @@ async fn site_icons(browser_id: String, profile_id: String) -> Result<HashMap<St
 pub fn open_site_blocking(browser_id: &str, profile_id: &str, domain: &str) -> Result<(), String> {
     let (browser, profile) = browsers::find(browser_id, profile_id).ok_or("Профиль не найден")?;
     let exe = open::browser_exe(&browser, &profile).ok_or_else(|| format!("Не нашёл, где установлен {}", browser.name))?;
-    let args = open::launch_args(&browser, &profile, &open::site_url(domain));
-    open::launch_as_user(&exe, &args).map_err(|e| format!("Не удалось открыть {domain}: {e}"))
+    let url = open::site_url(domain);
+    let args = open::launch_args(&browser, &profile, &url);
+    open::launch_as_user(&exe, &args, &url).map_err(|e| format!("Не удалось открыть {domain}: {e}"))
 }
 
 #[tauri::command]

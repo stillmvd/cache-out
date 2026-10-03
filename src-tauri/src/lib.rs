@@ -5,6 +5,7 @@ pub mod firefox;
 pub mod icons;
 pub mod localstorage;
 pub mod model;
+pub mod open;
 pub mod procs;
 pub mod site;
 pub mod snapshot;
@@ -60,6 +61,20 @@ async fn site_icons(browser_id: String, profile_id: String) -> Result<HashMap<St
         .map_err(|e| e.to_string())?
 }
 
+pub fn open_site_blocking(browser_id: &str, profile_id: &str, domain: &str) -> Result<(), String> {
+    let (browser, profile) = browsers::find(browser_id, profile_id).ok_or("Профиль не найден")?;
+    let exe = open::browser_exe(&browser, &profile).ok_or_else(|| format!("Не нашёл, где установлен {}", browser.name))?;
+    let args = open::launch_args(&browser, &profile, &open::site_url(domain));
+    open::launch_as_user(&exe, &args).map_err(|e| format!("Не удалось открыть {domain}: {e}"))
+}
+
+#[tauri::command]
+async fn open_site(browser_id: String, profile_id: String, domain: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || open_site_blocking(&browser_id, &profile_id, &domain))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 fn sweep_icons() {
     let root = icons::icons_root();
     let keep = browsers::detect().iter().flat_map(|b| b.profiles.iter().map(|p| icons::cache_dir(&root, &b.id, &p.id))).collect();
@@ -91,7 +106,7 @@ pub fn run() {
     clean::sweep_stale();
     std::thread::spawn(sweep_icons);
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![list_browsers, scan_profile, running_processes, clean_profile, site_icons])
+        .invoke_handler(tauri::generate_handler![list_browsers, scan_profile, running_processes, clean_profile, site_icons, open_site])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

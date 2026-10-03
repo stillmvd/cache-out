@@ -171,6 +171,11 @@
   .fav img { width: 18px; height: 18px; object-fit: contain; }
   .rw .txt { display: flex; flex-direction: column; min-width: 0; }
   .rw .dom { overflow: hidden; font-size: 15px; font-weight: 700; white-space: nowrap; text-overflow: ellipsis; }
+  .rw .dom.link { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 0; border: 0; background: none; color: inherit; text-align: left; cursor: pointer; }
+  .rw .dom.link span { overflow: hidden; text-overflow: ellipsis; text-decoration: underline 1.5px transparent; text-underline-offset: 3px; transition: text-decoration-color 120ms var(--ease); }
+  .rw .dom.link svg { flex: none; width: 14px; height: 14px; color: var(--dim); opacity: 0; transition: opacity 120ms var(--ease); }
+  .rw .dom.link:hover span { text-decoration-color: currentColor; }
+  .rw .dom.link:hover svg, .rw .dom.link:focus-visible svg { opacity: 1; }
   .rw .sub { overflow: hidden; color: var(--dim); font-size: 12px; white-space: nowrap; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
   .chips { flex: none; display: flex; gap: 6px; }
   .rw.leaving > :not(.bits) { animation: rw-fade 700ms var(--ease) forwards; }

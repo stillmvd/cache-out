@@ -15,7 +15,7 @@ pub fn parse_tasklist(csv: &str) -> Vec<String> {
     out
 }
 
-fn hidden(exe: &str, args: &[&str]) -> Command {
+pub(crate) fn hidden(exe: &str, args: &[&str]) -> Command {
     let mut cmd = Command::new(exe);
     cmd.args(args);
     #[cfg(windows)]

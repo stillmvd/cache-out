@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { cleanProfile, listBrowsers, runningProcesses, scanProfile, siteIcons, type Browser, type CleanError, type CleanReport, type CleanRequest, type Scan } from "./lib/ipc";
+import { cleanProfile, listBrowsers, openSite, runningProcesses, scanProfile, siteIcons, type Browser, type CleanError, type CleanReport, type CleanRequest, type Scan } from "./lib/ipc";
 import { allTotals, pickedKeys, profileRow, siteRow, sortRows, totals, type Key, type Pick, type Picks, type Row, type Sort } from "./lib/rows";
 import { mb } from "./lib/format";
 import { Titlebar } from "./components/Titlebar";
@@ -272,6 +272,13 @@ export default function App() {
     [current, liveRows, shortName, rescan, scan],
   );
 
+  const open = useCallback(
+    (row: Row) => {
+      if (current) openSite(current.browser, current.profile, row.id).catch((e) => setToast(String(e)));
+    },
+    [current],
+  );
+
   const fire = useCallback((row: Row, target: Target) => applyClean(new Map([[row.id, target === "all" ? "all" : new Set([target])]])), [applyClean]);
 
   const clean = useCallback(() => {
@@ -423,7 +430,7 @@ export default function App() {
                 ) : (
                   <div className={`list-inner${leaving.size ? " shifting" : ""}`} style={{ height: slots.count * STEP + (panel ? 110 : 64) }}>
                     {rows.slice(first, last).map((row, i) => (
-                      <SiteRow key={row.id} row={row} pick={picks.get(row.id)} turbo={turbo} top={slots.at[first + i] * STEP} leaving={leaving.has(row.id)} icon={siteIconMap?.[row.id]} onToggle={toggle} onFire={fire} />
+                      <SiteRow key={row.id} row={row} pick={picks.get(row.id)} turbo={turbo} top={slots.at[first + i] * STEP} leaving={leaving.has(row.id)} icon={siteIconMap?.[row.id]} onToggle={toggle} onFire={fire} onOpen={open} />
                     ))}
                   </div>
                 )}

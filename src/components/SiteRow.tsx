@@ -89,6 +89,7 @@ type Props = {
   icon?: string;
   onToggle: (row: Row, target: Target) => void;
   onFire: (row: Row, target: Target) => void;
+  onOpen: (row: Row) => void;
 };
 
 function Fav({ row, icon }: { row: Row; icon?: string }) {
@@ -98,7 +99,7 @@ function Fav({ row, icon }: { row: Row; icon?: string }) {
   return <>{row.title[0]}</>;
 }
 
-export const SiteRow = memo(function SiteRow({ row, pick, turbo, top, leaving, icon, onToggle, onFire }: Props) {
+export const SiteRow = memo(function SiteRow({ row, pick, turbo, top, leaving, icon, onToggle, onFire, onOpen }: Props) {
   const keys = pickedKeys(row, pick);
   const all = pick === "all";
   const empty = row.items.every((i) => !i.value);
@@ -109,7 +110,14 @@ export const SiteRow = memo(function SiteRow({ row, pick, turbo, top, leaving, i
           <Fav row={row} icon={icon} />
         </span>
         <span className="txt">
-          <span className="dom">{row.title}</span>
+          {row.prof ? (
+            <span className="dom">{row.title}</span>
+          ) : (
+            <button type="button" className="dom link" onClick={() => onOpen(row)} title={`Открыть ${row.title} в браузере`}>
+              <span>{row.title}</span>
+              <Icon name="ext" />
+            </button>
+          )}
           <span className="sub">{row.sub}</span>
         </span>
       </span>

@@ -2,6 +2,8 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf, Prefix};
 use std::process::Command;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -87,6 +89,30 @@ impl Shadow {
     pub fn path(&self, original: &Path) -> Option<PathBuf> {
         shadow_path(&self.device, original)
     }
+}
+
+const REUSE: Duration = Duration::from_secs(30);
+static SHARED: Mutex<Option<(Instant, Arc<Shadow>)>> = Mutex::new(None);
+
+pub fn shared(volume: &str) -> Option<Arc<Shadow>> {
+    let mut slot = SHARED.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((born, s)) = slot.as_ref() {
+        if born.elapsed() < REUSE && s.volume.eq_ignore_ascii_case(volume) {
+            return Some(s.clone());
+        }
+    }
+    *slot = None;
+    let s = Arc::new(Shadow::create(volume).ok()?);
+    *slot = Some((Instant::now(), s.clone()));
+    let id = s.id.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(REUSE);
+        let mut slot = SHARED.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.as_ref().is_some_and(|(_, s)| s.id == id) {
+            *slot = None;
+        }
+    });
+    Some(s)
 }
 
 impl Drop for Shadow {

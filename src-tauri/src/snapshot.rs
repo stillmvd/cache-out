@@ -1,4 +1,5 @@
 use crate::vss::{self, Shadow};
+use std::sync::Arc;
 use std::cell::OnceCell;
 use std::fs;
 use std::io;
@@ -9,7 +10,7 @@ static NEXT: AtomicU32 = AtomicU32::new(0);
 
 pub struct Snapshot {
     dir: PathBuf,
-    shadow: OnceCell<Option<Shadow>>,
+    shadow: OnceCell<Option<Arc<Shadow>>>,
 }
 
 fn is_locked(e: &io::Error) -> bool {
@@ -42,7 +43,7 @@ impl Snapshot {
     fn copy_into(&self, src: &Path, dir: &Path) -> io::Result<PathBuf> {
         match self.copy_from(src, src, dir) {
             Err(e) if is_locked(&e) => {
-                let shadow = self.shadow.get_or_init(|| vss::volume_of(src).and_then(|v| Shadow::create(&v).ok()));
+                let shadow = self.shadow.get_or_init(|| vss::volume_of(src).and_then(|v| vss::shared(&v)));
                 let from = shadow.as_ref().filter(|s| s.covers(src)).and_then(|s| s.path(src)).ok_or(e)?;
                 self.copy_from(&from, src, dir)
             }

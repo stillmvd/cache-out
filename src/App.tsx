@@ -206,7 +206,7 @@ export default function App() {
   }, []);
 
   const applyClean = useCallback(
-    async (targets: Map<string, Pick>, close = false) => {
+    async (targets: Map<string, Pick>, close = false, restorePicks = true) => {
       if (!current) return;
       const leave: string[] = [];
       const done = new Map<string, Set<Key>>();
@@ -223,27 +223,6 @@ export default function App() {
       }
       if (!done.size) return;
       const k = keyOf(current);
-      busy.current += 1;
-      if (close) setToast(`Закрываю ${shortName}…`);
-      let report: CleanReport;
-      try {
-        report = await cleanProfile(current.browser, current.profile, request, close);
-      } catch (e) {
-        const err = e as Partial<CleanError>;
-        setToast(err.message ?? String(e));
-        if (err.touched) {
-          dirty.current.add(k);
-          if (currentKey.current === k) rescan(current);
-        }
-        return;
-      } finally {
-        busy.current -= 1;
-      }
-      dirty.current.add(k);
-      const synced = scan && typeof scan !== "string" && scan.sync && [...done.values()].some((keys) => keys.has("c") || keys.has("h"));
-      const head = report.freedBytes > 0 ? `Очищено ${mb(report.freedBytes)}` : "Очищено";
-      setToast(synced ? `${head}\nСинхронизация ${shortName} может вернуть историю и входы` : head);
-      if (currentKey.current !== k) return;
       setCleared((prev) => {
         const next = new Map(prev);
         done.forEach((keys, id) => next.set(id, new Set([...(prev.get(id) ?? []), ...keys])));
@@ -259,15 +238,50 @@ export default function App() {
         });
         return next;
       });
-      setFreed((f) => f + report.freedBytes);
+      let leaveTimer = 0;
       if (leave.length) {
         setLeaving((s) => new Set([...s, ...leave]));
-        const id = window.setTimeout(() => {
+        leaveTimer = window.setTimeout(() => {
           setGone((g) => new Set([...g, ...leave]));
           setLeaving((s) => new Set([...s].filter((x) => !leave.includes(x))));
         }, LEAVE_MS);
-        timers.current.push(id);
+        timers.current.push(leaveTimer);
       }
+      busy.current += 1;
+      if (close) setToast(`Закрываю ${shortName}…`);
+      let report: CleanReport;
+      try {
+        report = await cleanProfile(current.browser, current.profile, request, close);
+      } catch (e) {
+        const err = e as Partial<CleanError>;
+        setToast(err.message ?? String(e));
+        if (err.touched) {
+          dirty.current.add(k);
+          if (currentKey.current === k) rescan(current);
+        } else if (currentKey.current === k) {
+          window.clearTimeout(leaveTimer);
+          setLeaving((s) => new Set([...s].filter((x) => !leave.includes(x))));
+          setGone((g) => new Set([...g].filter((x) => !leave.includes(x))));
+          setCleared((prev) => {
+            const next = new Map(prev);
+            done.forEach((keys, id) => {
+              const left = [...(prev.get(id) ?? [])].filter((k) => !keys.has(k));
+              if (left.length) next.set(id, new Set(left));
+              else next.delete(id);
+            });
+            return next;
+          });
+          if (restorePicks) setPicks((prev) => new Map([...prev, ...[...done.keys()].map((id) => [id, targets.get(id)!] as const)]));
+        }
+        return;
+      } finally {
+        busy.current -= 1;
+      }
+      dirty.current.add(k);
+      const synced = scan && typeof scan !== "string" && scan.sync && [...done.values()].some((keys) => keys.has("c") || keys.has("h"));
+      const head = report.freedBytes > 0 ? `Очищено ${mb(report.freedBytes)}` : "Очищено";
+      setToast(synced ? `${head}\nСинхронизация ${shortName} может вернуть историю и входы` : head);
+      if (currentKey.current === k) setFreed((f) => f + report.freedBytes);
     },
     [current, liveRows, shortName, rescan, scan],
   );
@@ -279,7 +293,7 @@ export default function App() {
     [current],
   );
 
-  const fire = useCallback((row: Row, target: Target) => applyClean(new Map([[row.id, target === "all" ? "all" : new Set([target])]])), [applyClean]);
+  const fire = useCallback((row: Row, target: Target) => applyClean(new Map([[row.id, target === "all" ? "all" : new Set([target])]]), false, false), [applyClean]);
 
   const clean = useCallback(() => {
     if (turbo || !t.items || busy.current) return;

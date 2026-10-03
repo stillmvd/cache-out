@@ -1,5 +1,7 @@
 use crate::chromium::{cookies_db, has_table, indexeddb_origin, local_storage_dir, sw_cache_dirs, CACHE_DIRS, DOWNLOAD_URL};
+use crate::firefox;
 use crate::localstorage;
+use crate::model::Family;
 use crate::site::{site_of_host, site_of_origin, site_of_url};
 use crate::snapshot::dir_size;
 use rusqlite::Connection;
@@ -265,9 +267,13 @@ fn step<T, E: std::fmt::Display>(label: &str, r: Result<T, E>) -> Result<T, Stri
     r.map_err(|e| format!("{label}: {e}"))
 }
 
-pub fn clean_profile(profile: &Path, req: &CleanRequest, backup_dir: PathBuf) -> Result<CleanReport, CleanError> {
+pub fn clean_profile(profile: &Path, family: Family, req: &CleanRequest, backup_dir: PathBuf) -> Result<CleanReport, CleanError> {
     let mut backup = Backup { profile, dir: backup_dir, used: false };
-    match run(profile, req, &mut backup) {
+    let done = match family {
+        Family::Chromium => run(profile, req, &mut backup),
+        Family::Firefox => run_firefox(profile, req, &mut backup),
+    };
+    match done {
         Ok(freed) => Ok(CleanReport { freed_bytes: freed, backup: backup.used.then_some(backup.dir) }),
         Err(message) => Err(CleanError {
             message: if backup.used { format!("{message}. Что успело удалиться — в копии {}", backup.dir.display()) } else { message },
@@ -382,6 +388,122 @@ fn run(profile: &Path, req: &CleanRequest, backup: &mut Backup) -> Result<u64, S
     Ok(freed)
 }
 
+pub fn clean_ff_cookies(db: &Connection, sites: &HashSet<&str>) -> rusqlite::Result<()> {
+    mark(db, "gone_c", &matching(db, "SELECT id, host FROM moz_cookies", sites, site_of_host)?)?;
+    drop_where(db, "moz_cookies", "id", "gone_c")
+}
+
+fn prune_places(db: &Connection, set: &str) -> rusqlite::Result<()> {
+    db.execute_batch(&format!(
+        "DELETE FROM moz_places WHERE id IN (SELECT id FROM temp.{set}) AND visit_count = 0 AND foreign_count = 0
+           AND id NOT IN (SELECT place_id FROM moz_annos);"
+    ))?;
+    for (table, column) in [("moz_places_extra", "place_id"), ("moz_inputhistory", "place_id"), ("moz_places_metadata", "place_id"), ("moz_places_metadata", "referrer_place_id")] {
+        if has_table(db, table) && has_column(db, table, column) {
+            db.execute(&format!("DELETE FROM {table} WHERE {column} IN (SELECT id FROM temp.{set}) AND {column} NOT IN (SELECT id FROM moz_places)"), [])?;
+        }
+    }
+    db.execute_batch("DELETE FROM moz_origins WHERE id NOT IN (SELECT origin_id FROM moz_places WHERE origin_id IS NOT NULL);")
+}
+
+pub fn clean_ff_places(db: &Connection, history: &HashSet<&str>, downloads: &HashSet<&str>) -> rusqlite::Result<()> {
+    let dl = "SELECT n.id, p.url FROM moz_annos n JOIN moz_places p ON p.id = n.place_id
+              WHERE n.anno_attribute_id IN (SELECT id FROM moz_anno_attributes WHERE name LIKE 'downloads/%')";
+    mark(db, "gone_a", &matching(db, dl, downloads, site_of_url)?)?;
+    mark(db, "touched", &ids(db, "SELECT DISTINCT place_id FROM moz_annos WHERE id IN (SELECT id FROM temp.gone_a)")?)?;
+    drop_where(db, "moz_annos", "id", "gone_a")?;
+    mark(db, "gone_p", &matching(db, "SELECT id, url FROM moz_places", history, site_of_url)?)?;
+    mark(db, "gone_v", &ids(db, "SELECT id FROM moz_historyvisits WHERE place_id IN (SELECT id FROM temp.gone_p)")?)?;
+    drop_where(db, "moz_historyvisits_extra", "visit_id", "gone_v")?;
+    drop_where(db, "moz_historyvisits", "id", "gone_v")?;
+    drop_where(db, "moz_inputhistory", "place_id", "gone_p")?;
+    db.execute_batch(
+        "UPDATE moz_places SET visit_count = 0, last_visit_date = NULL, frecency = 0, recalc_frecency = 1 WHERE id IN (SELECT id FROM temp.gone_p);
+         INSERT OR IGNORE INTO temp.touched SELECT id FROM temp.gone_p;",
+    )?;
+    prune_places(db, "touched")
+}
+
+fn run_firefox(profile: &Path, req: &CleanRequest, backup: &mut Backup) -> Result<u64, String> {
+    let mut freed = 0u64;
+    let cookies = req.domains(Key::Cookies);
+    let history = req.domains(Key::History);
+    let downloads = req.domains(Key::Downloads);
+    let storage = req.domains(Key::Storage);
+    let site_cache = req.domains(Key::SiteCache);
+
+    let path = profile.join("cookies.sqlite");
+    if path.is_file() && !cookies.is_empty() {
+        step("Копия куки", backup.copy_db(&path))?;
+        let mut db = step("Куки", open(&path))?;
+        step("Куки", in_tx(&mut db, |db| clean_ff_cookies(db, &cookies)))?;
+    }
+
+    let path = profile.join("places.sqlite");
+    if path.is_file() && !(history.is_empty() && downloads.is_empty()) {
+        step("Копия истории", backup.copy_db(&path))?;
+        let mut db = step("История", open(&path))?;
+        step("История", in_tx(&mut db, |db| clean_ff_places(db, &history, &downloads)))?;
+    }
+
+    for (domain, dir) in firefox::storage_dirs(profile) {
+        let cache = dir.join("cache");
+        if site_cache.contains(domain.as_str()) {
+            freed += step("Кеш сайта", remove(&cache))?;
+        }
+        if !storage.contains(domain.as_str()) {
+            continue;
+        }
+        if cache.exists() {
+            for e in step("Хранилище", fs::read_dir(&dir))?.flatten() {
+                let name = e.file_name();
+                if name != "cache" && name != ".metadata-v2" {
+                    freed += step("Хранилище", backup.take(&e.path()))?;
+                }
+            }
+        } else {
+            freed += step("Хранилище", backup.take(&dir))?;
+        }
+    }
+
+    if req.profile.contains(&Key::Forms) {
+        let path = profile.join("formhistory.sqlite");
+        if path.is_file() {
+            step("Копия форм", backup.copy_db(&path))?;
+            let mut db = step("Формы", open(&path))?;
+            step(
+                "Формы",
+                in_tx(&mut db, |db| {
+                    for t in ["moz_history_to_sources", "moz_formhistory"] {
+                        if has_table(db, t) {
+                            db.execute(&format!("DELETE FROM {t}"), [])?;
+                        }
+                    }
+                    Ok(())
+                }),
+            )?;
+        }
+    }
+
+    let path = firefox::addresses_file(profile);
+    if req.profile.contains(&Key::Addresses) && path.is_file() {
+        step("Копия адресов", backup.copy_db(&path))?;
+        let text = step("Адреса", fs::read_to_string(&path))?;
+        let mut json: serde_json::Value = step("Адреса", serde_json::from_str(&text))?;
+        if let Some(a) = json.get_mut("addresses") {
+            *a = serde_json::Value::Array(vec![]);
+        }
+        step("Адреса", fs::write(&path, step("Адреса", serde_json::to_string(&json))?))?;
+    }
+
+    if req.profile.contains(&Key::BrowserCache) {
+        for d in firefox::cache_dirs(profile) {
+            freed += step("Кеш браузера", remove(&d))?;
+        }
+    }
+    Ok(freed)
+}
+
 pub fn backup_dir(browser_id: &str, profile_id: &str) -> PathBuf {
     let safe: String = profile_id.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
@@ -490,7 +612,7 @@ mod tests {
         let p = root.join("Default");
         fixture(&p);
         let all = [Key::Cookies, Key::History, Key::Downloads, Key::Storage, Key::SiteCache];
-        let report = clean_profile(&p, &req(&[("google.com", &all)], &[]), root.join("bk")).unwrap();
+        let report = clean_profile(&p, Family::Chromium, &req(&[("google.com", &all)], &[]), root.join("bk")).unwrap();
 
         assert_eq!(count(&p.join("Network").join("Cookies"), "SELECT COUNT(*) FROM cookies"), 1);
         let h = p.join("History");
@@ -531,7 +653,7 @@ mod tests {
         let root = temp("storage");
         let p = root.join("Default");
         fixture(&p);
-        clean_profile(&p, &req(&[("google.com", &[Key::Storage])], &[]), root.join("bk")).unwrap();
+        clean_profile(&p, Family::Chromium, &req(&[("google.com", &[Key::Storage])], &[]), root.join("bk")).unwrap();
         let b1 = p.join("WebStorage").join("1");
         assert!(b1.join("CacheStorage").join("c").exists());
         assert!(p.join("Service Worker").join("CacheStorage").join("aa").exists());
@@ -546,7 +668,7 @@ mod tests {
         let root = temp("profile");
         let p = root.join("Default");
         fixture(&p);
-        let report = clean_profile(&p, &req(&[], &[Key::BrowserCache, Key::Forms, Key::Addresses]), root.join("bk")).unwrap();
+        let report = clean_profile(&p, Family::Chromium, &req(&[], &[Key::BrowserCache, Key::Forms, Key::Addresses]), root.join("bk")).unwrap();
         let w = p.join("Web Data");
         assert_eq!(count(&w, "SELECT COUNT(*) FROM autofill"), 0);
         assert_eq!(count(&w, "SELECT COUNT(*) FROM addresses"), 0);
@@ -562,7 +684,7 @@ mod tests {
         let root = temp("none");
         let p = root.join("Default");
         fixture(&p);
-        let report = clean_profile(&p, &CleanRequest::default(), root.join("bk")).unwrap();
+        let report = clean_profile(&p, Family::Chromium, &CleanRequest::default(), root.join("bk")).unwrap();
         assert_eq!(report.freed_bytes, 0);
         assert!(report.backup.is_none());
         assert!(!root.join("bk").exists());
@@ -575,10 +697,79 @@ mod tests {
         let p = root.join("Default");
         fixture(&p);
         fs::write(p.join("WebStorage").join("QuotaManager"), b"not a database at all, just junk bytes").unwrap();
-        let err = clean_profile(&p, &req(&[("google.com", &[Key::Cookies, Key::SiteCache])], &[]), root.join("bk")).unwrap_err();
+        let err = clean_profile(&p, Family::Chromium, &req(&[("google.com", &[Key::Cookies, Key::SiteCache])], &[]), root.join("bk")).unwrap_err();
         assert!(err.touched);
         assert!(err.message.contains(&root.join("bk").display().to_string()));
         assert_eq!(count(&root.join("bk").join("Network").join("Cookies"), "SELECT COUNT(*) FROM cookies"), 3);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn firefox_history_keeps_bookmarks_and_downloads_until_asked() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE moz_origins (id INTEGER PRIMARY KEY);
+             CREATE TABLE moz_places (id INTEGER PRIMARY KEY, url TEXT, visit_count INTEGER, last_visit_date INTEGER, foreign_count INTEGER, origin_id INTEGER, frecency INTEGER, recalc_frecency INTEGER);
+             CREATE TABLE moz_historyvisits (id INTEGER PRIMARY KEY, place_id INTEGER);
+             CREATE TABLE moz_anno_attributes (id INTEGER PRIMARY KEY, name TEXT);
+             CREATE TABLE moz_annos (id INTEGER PRIMARY KEY, place_id INTEGER, anno_attribute_id INTEGER);
+             CREATE TABLE moz_inputhistory (place_id INTEGER, input TEXT);
+             INSERT INTO moz_origins VALUES (1), (2);
+             INSERT INTO moz_places VALUES (1,'https://2ch.org/a',2,1,0,1,10,0), (2,'https://2ch.org/bm',1,1,1,1,10,0),
+               (3,'https://2ch.org/f.mp4',0,NULL,0,1,0,0), (4,'https://vk.com/',1,1,0,2,10,0);
+             INSERT INTO moz_historyvisits VALUES (10,1), (11,2), (12,4);
+             INSERT INTO moz_anno_attributes VALUES (1,'downloads/destinationFileURI');
+             INSERT INTO moz_annos VALUES (1,3,1);
+             INSERT INTO moz_inputhistory VALUES (1,'2ch');",
+        )
+        .unwrap();
+        let q = |sql: &str| -> String { db.query_row(sql, [], |r| r.get(0)).unwrap() };
+        clean_ff_places(&db, &HashSet::from(["2ch.org"]), &HashSet::new()).unwrap();
+        assert_eq!(q("SELECT group_concat(id) FROM moz_places"), "2,3,4");
+        assert_eq!(q("SELECT group_concat(id) FROM moz_historyvisits"), "12");
+        assert_eq!(q("SELECT visit_count || '/' || ifnull(last_visit_date, '-') FROM moz_places WHERE id = 2"), "0/-");
+        assert_eq!(q("SELECT count(*) || '' FROM moz_inputhistory"), "0");
+        assert_eq!(q("SELECT group_concat(id) FROM moz_origins"), "1,2");
+        clean_ff_places(&db, &HashSet::new(), &HashSet::from(["2ch.org"])).unwrap();
+        assert_eq!(q("SELECT group_concat(id) FROM moz_places"), "2,4");
+        assert_eq!(q("SELECT count(*) || '' FROM moz_annos"), "0");
+        clean_ff_places(&db, &HashSet::from(["vk.com"]), &HashSet::new()).unwrap();
+        assert_eq!(q("SELECT group_concat(id) FROM moz_origins"), "1");
+    }
+
+    #[test]
+    fn firefox_storage_and_profile_items() {
+        let root = temp("ff");
+        let p = root.join("prof");
+        let site = p.join("storage").join("default").join("https+++2ch.org");
+        fs::create_dir_all(site.join("idb")).unwrap();
+        fs::create_dir_all(site.join("cache")).unwrap();
+        fs::write(site.join(".metadata-v2"), b"m").unwrap();
+        fs::write(site.join("idb").join("x"), b"123").unwrap();
+        fs::write(site.join("cache").join("y"), b"45").unwrap();
+        let other = p.join("storage").join("permanent").join("https+++vk.com");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join("z"), b"1").unwrap();
+        Connection::open(p.join("formhistory.sqlite")).unwrap().execute_batch("CREATE TABLE moz_formhistory (fieldname TEXT, value TEXT); INSERT INTO moz_formhistory VALUES ('q','x');").unwrap();
+        fs::write(firefox::addresses_file(&p), r#"{"version":1,"addresses":[{"guid":"a"}],"creditCards":[{"guid":"c"}]}"#).unwrap();
+
+        let r = clean_profile(&p, Family::Firefox, &req(&[("2ch.org", &[Key::Storage])], &[Key::Forms, Key::Addresses]), root.join("bk")).unwrap();
+        assert_eq!(r.freed_bytes, 3);
+        assert!(!site.join("idb").exists());
+        assert!(site.join("cache").join("y").exists());
+        assert!(site.join(".metadata-v2").exists());
+        assert!(other.exists());
+        assert_eq!(count(&p.join("formhistory.sqlite"), "SELECT COUNT(*) FROM moz_formhistory"), 0);
+        let json: serde_json::Value = serde_json::from_str(&fs::read_to_string(firefox::addresses_file(&p)).unwrap()).unwrap();
+        assert_eq!(json["addresses"].as_array().unwrap().len(), 0);
+        assert_eq!(json["creditCards"].as_array().unwrap().len(), 1);
+        let bk = r.backup.unwrap();
+        assert!(bk.join("storage").join("default").join("https+++2ch.org").join("idb").join("x").exists());
+        assert!(bk.join("autofill-profiles.json").exists());
+
+        let r = clean_profile(&p, Family::Firefox, &req(&[("2ch.org", &[Key::Storage, Key::SiteCache])], &[]), root.join("bk2")).unwrap();
+        assert_eq!(r.freed_bytes, 2 + 1);
+        assert!(!site.exists());
         fs::remove_dir_all(&root).unwrap();
     }
 

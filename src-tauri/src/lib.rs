@@ -71,9 +71,6 @@ fn sweep_icons() {
 
 pub fn clean_blocking(browser_id: &str, profile_id: &str, request: &CleanRequest, close: bool) -> Result<CleanReport, CleanError> {
     let (browser, profile) = browsers::find(browser_id, profile_id).ok_or_else(|| CleanError::before("Профиль не найден"))?;
-    if browser.family != Family::Chromium {
-        return Err(CleanError::before("Firefox пока не поддерживается"));
-    }
     let _one = CLEANING.lock().unwrap_or_else(|e| e.into_inner());
     if procs::is_running(&browser.process) {
         if !close {
@@ -81,7 +78,7 @@ pub fn clean_blocking(browser_id: &str, profile_id: &str, request: &CleanRequest
         }
         procs::close(&browser.process, &browser.name).map_err(CleanError::before)?;
     }
-    clean::clean_profile(&profile.path, request, clean::backup_dir(&browser.id, &profile.id))
+    clean::clean_profile(&profile.path, browser.family, request, clean::backup_dir(&browser.id, &profile.id))
 }
 
 #[tauri::command]

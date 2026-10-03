@@ -1,8 +1,9 @@
 use cache_out_lib::clean::{clean_profile, CleanRequest, Key};
+use cache_out_lib::model::Family;
 use std::path::PathBuf;
 
 fn show(label: &str, p: &PathBuf, domain: &str) {
-    let s = cache_out_lib::chromium::scan(p).expect("scan");
+    let s = if p.join("places.sqlite").is_file() { cache_out_lib::firefox::scan(p) } else { cache_out_lib::chromium::scan(p) }.expect("scan");
     match s.sites.iter().find(|x| x.domain == domain) {
         Some(x) => println!("{label}: куки {} · адресов {} · визитов {} · загрузок {} · хранилище {} Б · кеш сайта {} Б", x.cookies, x.history_urls, x.visits, x.downloads, x.storage_bytes, x.site_cache_bytes),
         None => println!("{label}: {domain} нет в скане"),
@@ -21,7 +22,8 @@ fn main() {
         profile: if whole { vec![Key::BrowserCache, Key::Forms, Key::Addresses] } else { vec![] },
     };
     let backup = profile.parent().unwrap().join("backup");
-    let report = clean_profile(&profile, &request, backup).expect("clean");
+    let family = if profile.join("places.sqlite").is_file() { Family::Firefox } else { Family::Chromium };
+    let report = clean_profile(&profile, family, &request, backup).expect("clean");
     println!("освобождено {} Б, копия {:?}", report.freed_bytes, report.backup);
     show("после", &profile, &domain);
 }

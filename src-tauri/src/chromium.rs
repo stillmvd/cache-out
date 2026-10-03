@@ -4,9 +4,14 @@ use crate::snapshot::{dir_size, Snapshot};
 use rusqlite::{Connection, OpenFlags};
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-const CACHE_DIRS: &[&str] = &["Cache", "Code Cache", "GPUCache", "DawnGraphiteCache", "DawnWebGPUCache", r"Service Worker\ScriptCache"];
+pub const CACHE_DIRS: &[&str] = &["Cache", "Code Cache", "GPUCache", "DawnGraphiteCache", "DawnWebGPUCache", r"Service Worker\ScriptCache"];
+pub const DOWNLOAD_URL: &str = "COALESCE(NULLIF(tab_url, ''), NULLIF(site_url, ''), referrer)";
+
+pub fn cookies_db(profile: &Path) -> Option<PathBuf> {
+    [profile.join("Network").join("Cookies"), profile.join("Cookies")].into_iter().find(|p| p.is_file())
+}
 
 #[derive(Default)]
 struct Sites(HashMap<String, Site>);
@@ -36,7 +41,7 @@ fn open(snap: &Snapshot, src: &Path, label: &str, locked: &mut Vec<String>) -> O
     }
 }
 
-fn has_table(db: &Connection, name: &str) -> bool {
+pub fn has_table(db: &Connection, name: &str) -> bool {
     db.query_row("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1", [name], |_| Ok(())).is_ok()
 }
 
@@ -65,7 +70,7 @@ fn read_history(db: &Connection, sites: &mut Sites) -> rusqlite::Result<()> {
         }
     }
     if has_table(db, "downloads") {
-        let mut q = db.prepare("SELECT COALESCE(NULLIF(tab_url, ''), NULLIF(site_url, ''), referrer) FROM downloads")?;
+        let mut q = db.prepare(&format!("SELECT {DOWNLOAD_URL} FROM downloads"))?;
         let rows = q.query_map([], |r| r.get::<_, Option<String>>(0))?;
         for url in rows.flatten().flatten() {
             if let Some(d) = site_of_url(&url) {
@@ -98,10 +103,14 @@ fn read_storage(profile: &Path, snap: &Snapshot, sites: &mut Sites, locked: &mut
                 for (id, key) in rows.flatten() {
                     if let Some(d) = site_of_origin(&key) {
                         let dir = web.join(id.to_string());
+                        let total = dir_size(&dir);
+                        if total == 0 {
+                            continue;
+                        }
                         let cache = dir_size(&dir.join("CacheStorage"));
                         let s = sites.at(d);
                         s.site_cache_bytes += cache;
-                        s.storage_bytes += dir_size(&dir).saturating_sub(cache);
+                        s.storage_bytes += total.saturating_sub(cache);
                     }
                 }
             }
@@ -136,8 +145,7 @@ pub fn scan(profile: &Path) -> std::io::Result<ProfileScan> {
     let mut sites = Sites::default();
     let mut out = ProfileScan::default();
 
-    let cookies = [profile.join("Network").join("Cookies"), profile.join("Cookies")].into_iter().find(|p| p.is_file());
-    if let Some(db) = cookies.and_then(|p| open(&snap, &p, "Куки", &mut out.locked)) {
+    if let Some(db) = cookies_db(profile).and_then(|p| open(&snap, &p, "Куки", &mut out.locked)) {
         let _ = read_cookies(&db, &mut sites);
     }
     if let Some(db) = open(&snap, &profile.join("History"), "История", &mut out.locked) {

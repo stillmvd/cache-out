@@ -122,7 +122,14 @@
   .nav .pr { display: flex; align-items: center; gap: 8px; height: 32px; margin-left: 28px; padding: 0 10px; border-radius: 12px; color: var(--dim); font-size: 13px; font-weight: 500; text-align: left; }
   .nav .pr:hover { background: color-mix(in srgb, var(--raised) 60%, transparent); color: var(--fg); }
   .nav .pr.on { background: var(--raised); color: var(--fg); font-weight: 700; }
-  .nav .pr .n { margin-left: auto; color: var(--dim); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .nav .pr .n, .nav .solo .n { margin-left: auto; color: var(--dim); font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .nav .solo { border-radius: 12px; text-align: left; }
+  .nav .solo:hover { background: color-mix(in srgb, var(--raised) 60%, transparent); }
+  .nav .solo.on { background: var(--raised); }
+  .nav .solo .dot + .n { margin-left: 10px; }
+  .nav .pr { margin-left: 18px; padding-left: 10px; }
+  .nav .pr .pn-name { overflow: hidden; text-overflow: ellipsis; }
+  .nav .av { flex: none; display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; object-fit: cover; background: var(--strong); color: var(--fg); font-size: 11px; font-weight: 700; }
   .dot { flex: none; display: inline-flex; align-items: center; gap: 5px; margin-left: auto; color: var(--dim); font-size: 11px; font-weight: 700; }
   .dot i { width: 7px; height: 7px; border-radius: 50%; background: var(--coral); }
 

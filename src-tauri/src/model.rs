@@ -14,6 +14,9 @@ pub struct Profile {
     pub id: String,
     pub name: String,
     pub path: PathBuf,
+    #[serde(skip)]
+    pub avatar_src: Option<PathBuf>,
+    pub avatar: Option<String>,
 }
 
 #[derive(Serialize, Clone, Debug)]

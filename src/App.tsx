@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { listBrowsers, runningProcesses, scanProfile, type Browser, type Scan } from "./lib/ipc";
+import { cleanProfile, listBrowsers, runningProcesses, scanProfile, type Browser, type CleanError, type CleanReport, type CleanRequest, type Scan } from "./lib/ipc";
 import { allTotals, pickedKeys, profileRow, siteRow, sortRows, totals, type Key, type Pick, type Picks, type Row, type Sort } from "./lib/rows";
 import { mb } from "./lib/format";
 import { Titlebar } from "./components/Titlebar";
@@ -13,7 +13,6 @@ const ROW = 68;
 const GAP = 8;
 const STEP = ROW + GAP;
 const SORTS: [Sort, string][] = [["fresh", "Сначала свежие"], ["heavy", "Сначала тяжёлые"], ["name", "По имени"]];
-const DRY = "Пробный режим: на диске ничего не удалено — очистка подключится в следующей фазе";
 
 type Current = { browser: string; profile: string };
 type Cleared = Map<string, Set<Key>>;
@@ -42,6 +41,8 @@ export default function App() {
   const searchRef = useRef<HTMLInputElement>(null);
   const timers = useRef<number[]>([]);
   const currentKey = useRef("");
+  const busy = useRef(0);
+  const dirty = useRef(new Set<string>());
 
   const key = current ? keyOf(current) : "";
   currentKey.current = key;
@@ -87,6 +88,7 @@ export default function App() {
   const rescan = useCallback(
     (cur: Current) => {
       const k = keyOf(cur);
+      dirty.current.delete(k);
       setScanning((s) => new Set(s).add(k));
       scanProfile(cur.browser, cur.profile)
         .then(
@@ -111,7 +113,8 @@ export default function App() {
     if (!current) return;
     resetWork();
     setQuery("");
-    if (!scans.has(keyOf(current))) rescan(current);
+    const k = keyOf(current);
+    if (!scans.has(k) || dirty.current.has(k)) rescan(current);
   }, [current]);
 
   useEffect(() => {
@@ -194,20 +197,43 @@ export default function App() {
   }, []);
 
   const applyClean = useCallback(
-    (targets: Map<string, Pick>) => {
+    async (targets: Map<string, Pick>, close = false) => {
+      if (!current) return;
       const leave: string[] = [];
       const done = new Map<string, Set<Key>>();
-      let bytes = 0;
+      const request: CleanRequest = { sites: {}, profile: [] };
       for (const [id, pick] of targets) {
         const row = liveRows.find((r) => r.id === id);
         if (!row) continue;
         const keys = pickedKeys(row, pick);
         if (!keys.size) continue;
         done.set(id, keys);
-        for (const i of row.items) if (keys.has(i.key) && (i.key === "s" || i.key === "k" || i.key === "bc")) bytes += i.value;
+        if (row.prof) request.profile = [...keys];
+        else request.sites[id] = [...keys];
         if (!row.prof && row.items.every((i) => !i.value || keys.has(i.key))) leave.push(id);
       }
       if (!done.size) return;
+      const k = keyOf(current);
+      busy.current += 1;
+      if (close) setToast(`Закрываю ${shortName}…`);
+      let report: CleanReport;
+      try {
+        report = await cleanProfile(current.browser, current.profile, request, close);
+      } catch (e) {
+        const err = e as Partial<CleanError>;
+        setToast(err.message ?? String(e));
+        if (err.touched) {
+          dirty.current.add(k);
+          if (currentKey.current === k) rescan(current);
+        }
+        return;
+      } finally {
+        busy.current -= 1;
+      }
+      dirty.current.add(k);
+      const freedText = report.freedBytes > 0 ? `освобождено ${mb(report.freedBytes)}` : "очищено";
+      setToast(report.backup ? `Готово: ${freedText} · удалённое хранится 7 дней в копии` : `Готово: ${freedText}`);
+      if (currentKey.current !== k) return;
       setCleared((prev) => {
         const next = new Map(prev);
         done.forEach((keys, id) => next.set(id, new Set([...(prev.get(id) ?? []), ...keys])));
@@ -223,7 +249,7 @@ export default function App() {
         });
         return next;
       });
-      setFreed((f) => f + bytes);
+      setFreed((f) => f + report.freedBytes);
       if (leave.length) {
         setLeaving((s) => new Set([...s, ...leave]));
         const id = window.setTimeout(() => {
@@ -232,15 +258,14 @@ export default function App() {
         }, LEAVE_MS);
         timers.current.push(id);
       }
-      setToast(DRY);
     },
-    [liveRows],
+    [current, liveRows, shortName, rescan],
   );
 
   const fire = useCallback((row: Row, target: Target) => applyClean(new Map([[row.id, target === "all" ? "all" : new Set([target])]])), [applyClean]);
 
   const clean = useCallback(() => {
-    if (turbo || !t.items) return;
+    if (turbo || !t.items || busy.current) return;
     if (isOpen) {
       setAsking(true);
       return;
@@ -251,7 +276,7 @@ export default function App() {
   const cancelAsk = useCallback(() => setAsking(false), []);
   const confirmAsk = useCallback(() => {
     setAsking(false);
-    applyClean(picks);
+    applyClean(picks, true);
   }, [applyClean, picks]);
 
   useEffect(() => {
@@ -282,7 +307,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Titlebar path={browser ? `${shortName} · ${profileName}` : ""} />
+      <Titlebar path={!browser ? "" : browser.profiles.length > 1 ? `${shortName} · ${profileName}` : shortName} />
       <div className="body" inert={asking || undefined}>
         <BrowserNav browsers={browsers} current={current} counts={counts} running={running} onPick={(b, p) => setCurrent({ browser: b, profile: p })} />
         <section className="panel main" style={{ "--toast-bottom": panel ? "112px" : "16px" } as CSSProperties}>

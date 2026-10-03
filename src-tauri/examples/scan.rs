@@ -3,7 +3,7 @@ fn mb(b: u64) -> String {
 }
 
 fn main() {
-    let id = std::env::args().nth(1).unwrap_or_else(|| "edge".into());
+    let id = std::env::args().nth(1).unwrap_or_else(|| "chrome".into());
     for b in cache_out_lib::browsers::detect() {
         println!("{} [{}]: {}", b.name, b.id, b.profiles.iter().map(|p| format!("{} ({})", p.name, p.id)).collect::<Vec<_>>().join(", "));
     }

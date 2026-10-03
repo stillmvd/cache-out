@@ -1,6 +1,10 @@
 use crate::model::{Browser, Family, Profile};
+use crate::snapshot::Snapshot;
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
+use rusqlite::{Connection, OpenFlags};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 struct Known {
     id: &'static str,
@@ -13,7 +17,6 @@ struct Known {
 
 const KNOWN: &[Known] = &[
     Known { id: "chrome", name: "Google Chrome", family: Family::Chromium, base: "LOCALAPPDATA", dir: r"Google\Chrome\User Data", process: "chrome.exe" },
-    Known { id: "edge", name: "Microsoft Edge", family: Family::Chromium, base: "LOCALAPPDATA", dir: r"Microsoft\Edge\User Data", process: "msedge.exe" },
     Known { id: "brave", name: "Brave", family: Family::Chromium, base: "LOCALAPPDATA", dir: r"BraveSoftware\Brave-Browser\User Data", process: "brave.exe" },
     Known { id: "yandex", name: "Яндекс Браузер", family: Family::Chromium, base: "LOCALAPPDATA", dir: r"Yandex\YandexBrowser\User Data", process: "browser.exe" },
     Known { id: "opera", name: "Opera", family: Family::Chromium, base: "APPDATA", dir: r"Opera Software\Opera Stable", process: "opera.exe" },
@@ -75,15 +78,14 @@ fn chromium_profiles(root: &Path) -> Vec<Profile> {
         })
         .map(|e| {
             let id = e.file_name().to_string_lossy().to_string();
-            let name = names
-                .as_ref()
-                .and_then(|c| c.get(&id)?.get("name")?.as_str().map(String::from))
-                .unwrap_or_else(|| id.clone());
-            Profile { id, name, path: e.path() }
+            let info = names.as_ref().and_then(|c| c.get(&id));
+            let name = info.and_then(|i| i.get("name")?.as_str().map(String::from)).unwrap_or_else(|| id.clone());
+            let avatar_src = info.and_then(|i| i.get("gaia_picture_file_name")?.as_str()).and_then(|f| avatar_in(&e.path(), f));
+            Profile { id, name, path: e.path(), avatar_src, avatar: None }
         })
         .collect();
     if out.is_empty() && is_chromium_profile(root) {
-        out.push(Profile { id: "Default".into(), name: "Основной".into(), path: root.to_path_buf() });
+        out.push(Profile { id: "Default".into(), name: "Основной".into(), path: root.to_path_buf(), avatar_src: None, avatar: None });
     }
     out.sort_by(|a, b| (a.id != "Default").cmp(&(b.id != "Default")).then(a.id.cmp(&b.id)));
     out
@@ -98,7 +100,7 @@ pub fn parse_profiles_ini(text: &str, root: &Path) -> Vec<Profile> {
             if let Some(p) = path.take() {
                 let full = if relative { root.join(p.replace('/', "\\")) } else { PathBuf::from(&p) };
                 let id = full.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
-                out.push(Profile { id: id.clone(), name: name.take().unwrap_or(id), path: full });
+                out.push(Profile { id: id.clone(), name: name.take().unwrap_or(id), path: full, avatar_src: None, avatar: None });
             }
         }
         *name = None;
@@ -122,9 +124,50 @@ pub fn parse_profiles_ini(text: &str, root: &Path) -> Vec<Profile> {
     out
 }
 
+fn avatar_in(dir: &Path, file: &str) -> Option<PathBuf> {
+    let mut parts = Path::new(file).components();
+    let only = matches!((parts.next(), parts.next()), (Some(Component::Normal(_)), None));
+    Some(dir.join(file)).filter(|p| only && p.is_file())
+}
+
+pub fn avatar_data(path: &Path) -> Option<String> {
+    fs::read(path).ok().map(|b| format!("data:image/png;base64,{}", STANDARD.encode(b)))
+}
+
+fn ini_store_id(text: &str) -> Option<String> {
+    text.lines().find_map(|l| l.trim().strip_prefix("StoreID=")).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+pub fn read_profile_group(db: &Connection, root: &Path) -> rusqlite::Result<Vec<Profile>> {
+    let avatars = root.join("Profile Groups").join("avatars");
+    let mut q = db.prepare("SELECT path, name, avatar FROM Profiles ORDER BY id")?;
+    let rows = q.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)))?;
+    Ok(rows
+        .flatten()
+        .map(|(path, name, avatar)| {
+            let p = Path::new(&path);
+            let full = if p.is_absolute() { p.to_path_buf() } else { root.join(path.replace('/', "\\")) };
+            let id = full.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+            let avatar_src = avatar.and_then(|a| avatar_in(&avatars, &a));
+            Profile { id, name, path: full, avatar_src, avatar: None }
+        })
+        .collect())
+}
+
+fn firefox_group(root: &Path, store_id: &str) -> Option<Vec<Profile>> {
+    let src = root.join("Profile Groups").join(format!("{store_id}.sqlite"));
+    if !src.is_file() {
+        return None;
+    }
+    let snap = Snapshot::new().ok()?;
+    let db = Connection::open_with_flags(snap.copy_db(&src).ok()?, OpenFlags::SQLITE_OPEN_READ_WRITE).ok()?;
+    read_profile_group(&db, root).ok()
+}
+
 fn firefox_profiles(root: &Path) -> Vec<Profile> {
     let Ok(text) = fs::read_to_string(root.join("profiles.ini")) else { return vec![] };
-    parse_profiles_ini(&text, root).into_iter().filter(|p| p.path.join("prefs.js").is_file()).collect()
+    let group = ini_store_id(&text).and_then(|id| firefox_group(root, &id)).filter(|g| !g.is_empty());
+    group.unwrap_or_else(|| parse_profiles_ini(&text, root)).into_iter().filter(|p| p.path.join("prefs.js").is_file()).collect()
 }
 
 #[cfg(test)]
@@ -140,5 +183,32 @@ mod tests {
         assert_eq!(p[0].path, PathBuf::from(r"C:\R\Profiles\z9.default"));
         assert_eq!(p[1].name, "default-release");
         assert_eq!(p[2].path, PathBuf::from(r"D:\FF\work"));
+        assert_eq!(ini_store_id(ini), None);
+        assert_eq!(ini_store_id("[Profile0]\nPath=Profiles/x\nStoreID=98c5fa9c\n").as_deref(), Some("98c5fa9c"));
+    }
+
+    #[test]
+    fn reads_firefox_profile_group_with_avatars() {
+        let root = std::env::temp_dir().join(format!("cache-out-ffgroup-{}", std::process::id()));
+        let avatars = root.join("Profile Groups").join("avatars");
+        fs::create_dir_all(&avatars).unwrap();
+        fs::write(avatars.join("87099f90"), b"png").unwrap();
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            r"CREATE TABLE Profiles (id INTEGER PRIMARY KEY, path TEXT, name TEXT, avatar TEXT, themeId TEXT, themeFg TEXT, themeBg TEXT);
+              INSERT INTO Profiles VALUES (2, 'Profiles\b.work', 'Work','..\..\secret', '', '', '');
+              INSERT INTO Profiles VALUES (1, 'Profiles\a.default-release', 'Dark', '87099f90', '', '', '');
+              INSERT INTO Profiles VALUES (3, 'Profiles\c.x', 'Цветок', 'flower', '', '', '');",
+        )
+        .unwrap();
+        let p = read_profile_group(&db, &root).unwrap();
+        assert_eq!(p.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["Dark", "Work", "Цветок"]);
+        assert_eq!(p[0].id, "a.default-release");
+        assert_eq!(p[0].path, root.join(r"Profiles\a.default-release"));
+        assert_eq!(p[0].avatar_src, Some(avatars.join("87099f90")));
+        assert_eq!(p[1].avatar_src, None);
+        assert_eq!(p[2].avatar_src, None);
+        assert!(avatar_data(&avatars.join("87099f90")).unwrap().starts_with("data:image/png;base64,cG5n"));
+        fs::remove_dir_all(&root).unwrap();
     }
 }

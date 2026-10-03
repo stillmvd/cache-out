@@ -9,6 +9,7 @@ pub mod open;
 pub mod procs;
 pub mod site;
 pub mod snapshot;
+pub mod updates;
 pub mod vss;
 
 use clean::{CleanError, CleanReport, CleanRequest};
@@ -16,6 +17,7 @@ use model::{Browser, Family, ProfileScan};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use tauri::Manager;
 
 static CLEANING: Mutex<()> = Mutex::new(());
 
@@ -107,7 +109,18 @@ pub fn run() {
     clean::sweep_stale();
     std::thread::spawn(sweep_icons);
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![list_browsers, scan_profile, running_processes, clean_profile, site_icons, open_site])
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updates::Updates::default())
+        .setup(|app| {
+            updates::spawn(app.handle());
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                updates::install(window.app_handle());
+            }
+        })
+        .invoke_handler(tauri::generate_handler![list_browsers, scan_profile, running_processes, clean_profile, site_icons, open_site, updates::update_ready])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

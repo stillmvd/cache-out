@@ -60,4 +60,5 @@ pub struct ProfileScan {
     pub addresses: u32,
     pub locked: Vec<String>,
     pub from_shadow: bool,
+    pub sync: bool,
 }

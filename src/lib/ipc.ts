@@ -14,7 +14,7 @@ export type Site = {
   lastCookieAccess: number | null;
 };
 export type FormField = { name: string; entries: number; lastUsed: number | null };
-export type Scan = { sites: Site[]; cacheBytes: number; forms: FormField[]; addresses: number; locked: string[]; fromShadow: boolean };
+export type Scan = { sites: Site[]; cacheBytes: number; forms: FormField[]; addresses: number; locked: string[]; fromShadow: boolean; sync: boolean };
 
 export const listBrowsers = () => invoke<Browser[]>("list_browsers");
 export const scanProfile = (browserId: string, profileId: string) => invoke<Scan>("scan_profile", { browserId, profileId });

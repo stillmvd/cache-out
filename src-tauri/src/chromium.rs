@@ -191,6 +191,14 @@ pub fn read_forms(db: &Connection) -> rusqlite::Result<(Vec<FormField>, u32)> {
     Ok((forms, addresses))
 }
 
+pub fn sync_enabled(profile: &Path) -> bool {
+    fs::read_to_string(profile.join("Preferences"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.pointer("/sync/has_setup_completed")?.as_bool())
+        .unwrap_or(false)
+}
+
 pub fn scan(profile: &Path) -> std::io::Result<ProfileScan> {
     let snap = Snapshot::new()?;
     let mut sites = Sites::default();
@@ -210,6 +218,7 @@ pub fn scan(profile: &Path) -> std::io::Result<ProfileScan> {
         }
     }
     out.from_shadow = snap.used_shadow();
+    out.sync = sync_enabled(profile);
     out.cache_bytes = CACHE_DIRS.iter().map(|d| dir_size(&profile.join(d))).sum();
     out.sites = sites.0.into_values().collect();
     out.sites.sort_by(|a, b| b.last_visit.max(b.last_cookie_access).cmp(&a.last_visit.max(a.last_cookie_access)));

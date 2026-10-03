@@ -108,6 +108,10 @@ fn read_addresses(profile: &Path) -> u32 {
         .unwrap_or(0)
 }
 
+pub fn sync_enabled(profile: &Path) -> bool {
+    fs::read_to_string(profile.join("prefs.js")).is_ok_and(|s| s.lines().any(|l| l.starts_with("user_pref(\"services.sync.username\"")))
+}
+
 pub fn scan(profile: &Path) -> std::io::Result<ProfileScan> {
     let snap = Snapshot::new()?;
     let mut sites = Sites::default();
@@ -133,6 +137,7 @@ pub fn scan(profile: &Path) -> std::io::Result<ProfileScan> {
     }
     out.addresses = read_addresses(profile);
     out.from_shadow = snap.used_shadow();
+    out.sync = sync_enabled(profile);
     out.cache_bytes = cache_dirs(profile).iter().map(|d| dir_size(d)).sum();
     out.sites = sites.0.into_values().collect();
     out.sites.sort_by(|a, b| b.last_visit.max(b.last_cookie_access).cmp(&a.last_visit.max(a.last_cookie_access)));

@@ -137,7 +137,7 @@ export default function App() {
 
   useEffect(() => {
     if (!toast) return;
-    const id = window.setTimeout(() => setToast(""), 4500);
+    const id = window.setTimeout(() => setToast(""), Math.max(4500, toast.length * 60));
     return () => window.clearTimeout(id);
   }, [toast]);
 
@@ -241,7 +241,11 @@ export default function App() {
       }
       dirty.current.add(k);
       const freedText = report.freedBytes > 0 ? `освобождено ${mb(report.freedBytes)}` : "очищено";
-      setToast(report.backup ? `Готово: ${freedText} · удалённое хранится 7 дней в копии` : `Готово: ${freedText}`);
+      const synced = scan && typeof scan !== "string" && scan.sync && [...done.values()].some((keys) => keys.has("c") || keys.has("h"));
+      const parts = [`Готово: ${freedText}`];
+      if (report.backup) parts.push("удалённое хранится 7 дней в копии");
+      if (synced) parts.push(`в ${shortName} включена синхронизация — история и входы могут вернуться с других устройств`);
+      setToast(parts.join(" · "));
       if (currentKey.current !== k) return;
       setCleared((prev) => {
         const next = new Map(prev);
@@ -268,7 +272,7 @@ export default function App() {
         timers.current.push(id);
       }
     },
-    [current, liveRows, shortName, rescan],
+    [current, liveRows, shortName, rescan, scan],
   );
 
   const fire = useCallback((row: Row, target: Target) => applyClean(new Map([[row.id, target === "all" ? "all" : new Set([target])]])), [applyClean]);

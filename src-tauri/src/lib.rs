@@ -50,10 +50,7 @@ async fn scan_profile(browser_id: String, profile_id: String) -> Result<ProfileS
 
 pub fn site_icons_blocking(browser_id: &str, profile_id: &str) -> Result<HashMap<String, PathBuf>, String> {
     let (browser, profile) = browsers::find(browser_id, profile_id).ok_or("Профиль не найден")?;
-    if browser.family != Family::Chromium {
-        return Ok(HashMap::new());
-    }
-    icons::site_icons(&profile.path, &icons::cache_dir(&icons::icons_root(), &browser.id, &profile.id)).map_err(|e| e.to_string())
+    icons::site_icons(&profile.path, browser.family, &icons::cache_dir(&icons::icons_root(), &browser.id, &profile.id)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

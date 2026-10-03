@@ -1,3 +1,4 @@
+use crate::model::Family;
 use crate::site::site_of_url;
 use crate::snapshot::Snapshot;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
@@ -22,37 +23,70 @@ pub fn cache_dir(root: &Path, browser_id: &str, profile_id: &str) -> PathBuf {
     root.join(safe(browser_id)).join(safe(profile_id))
 }
 
-fn file_of(domain: &str) -> String {
-    format!("{}.png", domain.replace(':', "!"))
+const EXTS: &[&str] = &["png", "svg", "ico"];
+
+fn ext_of(data: &[u8]) -> Option<&'static str> {
+    if data.starts_with(b"\x89PNG") {
+        Some("png")
+    } else if data.starts_with(b"<svg") || data.starts_with(b"<?xml") {
+        Some("svg")
+    } else if data.starts_with(b"\x00\x00\x01\x00") {
+        Some("ico")
+    } else {
+        None
+    }
+}
+
+fn file_of(domain: &str, ext: &str) -> String {
+    format!("{}.{ext}", domain.replace(':', "!"))
 }
 
 fn domain_of(file: &str) -> Option<String> {
-    file.strip_suffix(".png").map(|d| d.replace('!', ":"))
+    let (name, ext) = file.rsplit_once('.')?;
+    EXTS.contains(&ext).then(|| name.replace('!', ":"))
 }
 
-pub fn pick_icons(db: &Connection) -> rusqlite::Result<HashMap<String, Vec<u8>>> {
-    let mut counts: HashMap<(String, i64), u32> = HashMap::new();
-    let mut q = db.prepare("SELECT page_url, icon_id FROM icon_mapping WHERE icon_id IS NOT NULL")?;
-    let rows = q.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
-    for (url, id) in rows.flatten() {
+fn queries(family: Family) -> (&'static str, &'static str, &'static str) {
+    match family {
+        Family::Chromium => (
+            "Favicons",
+            "SELECT m.page_url, m.icon_id, COALESCE((SELECT MAX(width) FROM favicon_bitmaps b WHERE b.icon_id = m.icon_id), 0)
+             FROM icon_mapping m WHERE m.icon_id IS NOT NULL",
+            "SELECT image_data FROM favicon_bitmaps WHERE icon_id = ?1 AND length(image_data) > 0 ORDER BY width = 32 DESC, width DESC LIMIT 1",
+        ),
+        Family::Firefox => (
+            "favicons.sqlite",
+            "SELECT p.page_url, i.id, i.width FROM moz_icons_to_pages ip
+             JOIN moz_pages_w_icons p ON p.id = ip.page_id JOIN moz_icons i ON i.id = ip.icon_id",
+            "SELECT data FROM moz_icons WHERE id = ?1 AND length(data) > 0",
+        ),
+    }
+}
+
+pub fn pick_icons(db: &Connection, family: Family) -> rusqlite::Result<HashMap<String, Vec<u8>>> {
+    let (_, pages, data) = queries(family);
+    let mut counts: HashMap<(String, i64), (u32, i64)> = HashMap::new();
+    let mut q = db.prepare(pages)?;
+    let rows = q.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)))?;
+    for (url, id, width) in rows.flatten() {
         if let Some(d) = site_of_url(&url) {
-            *counts.entry((d, id)).or_default() += 1;
+            let e = counts.entry((d, id)).or_insert((0, width));
+            e.0 += 1;
         }
     }
-    let mut best: HashMap<String, (i64, u32)> = HashMap::new();
-    for ((d, id), n) in counts {
-        let e = best.entry(d).or_insert((id, 0));
-        if n > e.1 || (n == e.1 && id < e.0) {
-            *e = (id, n);
+    let rank = |id: i64, (n, w): (u32, i64)| (n, w == 32, w, -id);
+    let mut best: HashMap<String, (i64, (u32, i64))> = HashMap::new();
+    for ((d, id), score) in counts {
+        let e = best.entry(d).or_insert((id, score));
+        if rank(id, score) > rank(e.0, e.1) {
+            *e = (id, score);
         }
     }
-    let mut q = db.prepare(
-        "SELECT image_data FROM favicon_bitmaps WHERE icon_id = ?1 AND length(image_data) > 0 ORDER BY width = 32 DESC, width DESC LIMIT 1",
-    )?;
+    let mut q = db.prepare(data)?;
     let mut out = HashMap::new();
     for (d, (id, _)) in best {
-        if let Some(data) = q.query_row([id], |r| r.get::<_, Vec<u8>>(0)).optional()? {
-            out.insert(d, data);
+        if let Some(bytes) = q.query_row([id], |r| r.get::<_, Vec<u8>>(0)).optional()? {
+            out.insert(d, bytes);
         }
     }
     Ok(out)
@@ -79,20 +113,22 @@ pub fn write_icons(dir: &Path, icons: &HashMap<String, Vec<u8>>, stamp: &str) ->
     }
     fs::create_dir_all(dir)?;
     for (d, data) in icons {
-        fs::write(dir.join(file_of(d)), data)?;
+        if let Some(ext) = ext_of(data) {
+            fs::write(dir.join(file_of(d, ext)), data)?;
+        }
     }
     fs::write(dir.join(STAMP), stamp)
 }
 
-pub fn site_icons(profile: &Path, dir: &Path) -> io::Result<HashMap<String, PathBuf>> {
-    let src = profile.join("Favicons");
+pub fn site_icons(profile: &Path, family: Family, dir: &Path) -> io::Result<HashMap<String, PathBuf>> {
+    let src = profile.join(queries(family).0);
     let Some(stamp) = stamp_of(&src) else { return Ok(HashMap::new()) };
     if fs::read_to_string(dir.join(STAMP)).is_ok_and(|s| s == stamp) {
         return Ok(listed(dir));
     }
     let snap = Snapshot::new()?;
     let db = Connection::open_with_flags(snap.copy_db(&src)?, OpenFlags::SQLITE_OPEN_READ_WRITE).map_err(io::Error::other)?;
-    let icons = pick_icons(&db).map_err(io::Error::other)?;
+    let icons = pick_icons(&db, family).map_err(io::Error::other)?;
     write_icons(dir, &icons, &stamp)?;
     Ok(listed(dir))
 }
@@ -130,10 +166,29 @@ mod tests {
 
     #[test]
     fn picks_most_used_icon_per_site_preferring_32px() {
-        let icons = pick_icons(&favicons_db()).unwrap();
+        let icons = pick_icons(&favicons_db(), Family::Chromium).unwrap();
         assert_eq!(icons.len(), 2);
         assert_eq!(icons["vk.ru"], vec![0x11]);
         assert_eq!(icons["ya.ru"], vec![0x30]);
+    }
+
+    #[test]
+    fn picks_firefox_icon_sizes_preferring_32px() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE moz_icons (id INTEGER PRIMARY KEY, icon_url TEXT, width INTEGER, data BLOB);
+             CREATE TABLE moz_pages_w_icons (id INTEGER PRIMARY KEY, page_url TEXT);
+             CREATE TABLE moz_icons_to_pages (page_id INTEGER, icon_id INTEGER);
+             INSERT INTO moz_icons VALUES (1,'a',16,x'16'), (2,'a',32,x'32'), (3,'a',192,x'c0'), (4,'b',16,x'aa');
+             INSERT INTO moz_pages_w_icons VALUES (1,'https://2ch.org/a'), (2,'https://2ch.org/b'), (3,'https://vk.com/');
+             INSERT INTO moz_icons_to_pages VALUES (1,1), (1,2), (1,3), (2,1), (2,2), (2,3), (3,4);",
+        )
+        .unwrap();
+        let icons = pick_icons(&db, Family::Firefox).unwrap();
+        assert_eq!(icons["2ch.org"], vec![0x32]);
+        assert_eq!(icons["vk.com"], vec![0xaa]);
+        assert_eq!(ext_of(b"<svg xmlns"), Some("svg"));
+        assert_eq!(ext_of(b"GIF8"), None);
     }
 
     #[test]
@@ -142,12 +197,14 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         let dir = cache_dir(&root, "chrome", "Profile 1");
         assert_eq!(dir, root.join("chrome").join("Profile_1"));
-        let icons = HashMap::from([("vk.ru".to_string(), vec![1u8]), ("::1".to_string(), vec![2u8])]);
+        let png = b"\x89PNG1".to_vec();
+        let icons = HashMap::from([("vk.ru".to_string(), png.clone()), ("::1".to_string(), b"<svg/>".to_vec()), ("x.org".to_string(), vec![7u8])]);
         write_icons(&dir, &icons, "s1").unwrap();
         let got = listed(&dir);
         assert_eq!(got.len(), 2);
-        assert_eq!(fs::read(&got["::1"]).unwrap(), vec![2u8]);
-        write_icons(&dir, &HashMap::from([("ya.ru".to_string(), vec![3u8])]), "s2").unwrap();
+        assert_eq!(fs::read(&got["::1"]).unwrap(), b"<svg/>");
+        assert!(got["vk.ru"].ends_with("vk.ru.png"));
+        write_icons(&dir, &HashMap::from([("ya.ru".to_string(), png)]), "s2").unwrap();
         assert_eq!(listed(&dir).keys().collect::<Vec<_>>(), ["ya.ru"]);
         let stale = cache_dir(&root, "brave", "Default");
         fs::create_dir_all(&stale).unwrap();

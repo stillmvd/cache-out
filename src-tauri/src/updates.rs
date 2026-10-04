@@ -42,16 +42,20 @@ async fn fetch(app: &AppHandle) -> tauri_plugin_updater::Result<()> {
     Ok(())
 }
 
-pub fn install(app: &AppHandle) {
-    let pending = app.state::<Updates>().0.lock().unwrap_or_else(|e| e.into_inner()).take();
-    if let Some((update, bytes)) = pending {
-        if let Err(e) = update.install(bytes) {
-            eprintln!("update install: {e}");
-        }
-    }
+pub fn install(app: &AppHandle, restart: bool) -> Result<(), String> {
+    let pending = app.state::<Updates>().0.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let Some((update, bytes)) = pending else {
+        return Ok(());
+    };
+    update.restart_after_install(restart).install(bytes).map_err(|e| format!("Не удалось обновить: {e}"))
 }
 
 #[tauri::command]
 pub fn update_ready(app: AppHandle) -> bool {
     ready(&app)
+}
+
+#[tauri::command]
+pub fn update_install(app: AppHandle) -> Result<(), String> {
+    install(&app, true)
 }

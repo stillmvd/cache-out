@@ -739,7 +739,10 @@ Section Install
 SectionEnd
 
 Function .onInstSuccess
-  ${If} $UpdateMode <> 1
+  ${GetOptions} $CMDLINE "/R" $R0
+  ${IfNot} ${Errors}
+    Exec '"$INSTDIR\${MAINBINARYNAME}.exe"'
+  ${ElseIf} $UpdateMode <> 1
     Exec '"$INSTDIR\${MAINBINARYNAME}.exe"'
   ${EndIf}
 FunctionEnd

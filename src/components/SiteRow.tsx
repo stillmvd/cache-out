@@ -77,13 +77,14 @@ function Bits() {
   );
 }
 
-const itemTitle = (row: Row, i: Item, turbo: boolean) =>
-  i.value ? `${i.label}: ${i.short}${turbo ? " — держи, чтобы очистить" : ""}` : `${i.label}: у ${row.prof ? "браузера" : "сайта"} нет`;
+const itemTitle = (row: Row, i: Item, hold: string) =>
+  i.value ? `${i.label}: ${i.short}${hold ? ` — ${hold}` : ""}` : `${i.label}: у ${row.prof ? "браузера" : "сайта"} нет`;
 
 type Props = {
   row: Row;
   pick: Pick | undefined;
   turbo: boolean;
+  hold: string;
   top: number;
   leaving: boolean;
   icon?: string;
@@ -99,7 +100,7 @@ function Fav({ row, icon }: { row: Row; icon?: string }) {
   return <>{row.title[0]}</>;
 }
 
-export const SiteRow = memo(function SiteRow({ row, pick, turbo, top, leaving, icon, onToggle, onFire, onOpen }: Props) {
+export const SiteRow = memo(function SiteRow({ row, pick, turbo, hold, top, leaving, icon, onToggle, onFire, onOpen }: Props) {
   const keys = pickedKeys(row, pick);
   const all = pick === "all";
   const empty = row.items.every((i) => !i.value);
@@ -127,7 +128,7 @@ export const SiteRow = memo(function SiteRow({ row, pick, turbo, top, leaving, i
             key={i.key}
             icon={i.icon}
             short={i.short}
-            title={itemTitle(row, i, turbo)}
+            title={itemTitle(row, i, turbo ? hold : "")}
             state={keys.has(i.key) ? (all ? "via" : "on") : ""}
             disabled={!i.value || leaving}
             turbo={turbo}
@@ -138,7 +139,7 @@ export const SiteRow = memo(function SiteRow({ row, pick, turbo, top, leaving, i
         <Cube
           icon="all"
           short="Всё"
-          title={turbo ? `Всё у ${row.title} — держи, чтобы очистить` : `Всё у ${row.title}`}
+          title={turbo ? `Всё у ${row.title} — ${hold}` : `Всё у ${row.title}`}
           state={all ? "on" : ""}
           disabled={empty || leaving}
           turbo={turbo}

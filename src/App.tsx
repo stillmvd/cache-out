@@ -132,10 +132,6 @@ export default function App() {
   }, [current, query, sort]);
 
   useEffect(() => {
-    if (isOpen) setTurbo(false);
-  }, [isOpen]);
-
-  useEffect(() => {
     if (!toast) return;
     const id = window.setTimeout(() => setToast(""), Math.max(4500, toast.length * 60));
     return () => window.clearTimeout(id);
@@ -248,7 +244,7 @@ export default function App() {
         timers.current.push(leaveTimer);
       }
       busy.current += 1;
-      if (close) setToast(`Закрываю ${shortName}…`);
+      if (close && isOpen) setToast(`Закрываю ${shortName}…`);
       let report: CleanReport;
       try {
         report = await cleanProfile(current.browser, current.profile, request, close);
@@ -283,7 +279,7 @@ export default function App() {
       setToast(synced ? `${head}\nСинхронизация ${shortName} может вернуть историю и входы` : head);
       if (currentKey.current === k) setFreed((f) => f + report.freedBytes);
     },
-    [current, liveRows, shortName, rescan, scan],
+    [current, liveRows, shortName, rescan, scan, isOpen],
   );
 
   const open = useCallback(
@@ -293,7 +289,7 @@ export default function App() {
     [current],
   );
 
-  const fire = useCallback((row: Row, target: Target) => applyClean(new Map([[row.id, target === "all" ? "all" : new Set([target])]]), false, false), [applyClean]);
+  const fire = useCallback((row: Row, target: Target) => applyClean(new Map([[row.id, target === "all" ? "all" : new Set([target])]]), true, false), [applyClean]);
 
   const clean = useCallback(() => {
     if (turbo || !t.items || busy.current) return;
@@ -343,7 +339,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Titlebar path={!browser ? "" : browser.profiles.length > 1 ? `${shortName} · ${profileName}` : shortName} />
+      <Titlebar onError={setToast} path={!browser ? "" : browser.profiles.length > 1 ? `${shortName} · ${profileName}` : shortName} />
       <div className="body" inert={asking || undefined}>
         <BrowserNav browsers={browsers} current={current} counts={counts} running={running} onPick={(b, p) => setCurrent({ browser: b, profile: p })} />
         <section className="panel main" style={{ "--toast-bottom": panel ? "112px" : "16px" } as CSSProperties}>
@@ -373,12 +369,12 @@ export default function App() {
             <button
               type="button"
               className={`turbo${turbo ? " on" : ""}`}
-              disabled={isOpen || !ready}
+              disabled={!ready}
               onClick={() => {
                 if (!turbo) setPicks(new Map());
                 setTurbo(!turbo);
               }}
-              title={isOpen ? `${shortName} открыт — турбо после закрытия` : "Турбо: держи пункт, чтобы очистить сразу"}
+              title={isOpen ? `Турбо: ${shortName} открыт — держи пункт, чтобы закрыть его и очистить` : "Турбо: держи пункт, чтобы очистить сразу"}
               aria-pressed={turbo}
             >
               <Icon name="zap" />
@@ -444,7 +440,7 @@ export default function App() {
                 ) : (
                   <div className={`list-inner${leaving.size ? " shifting" : ""}`} style={{ height: slots.count * STEP + (panel ? 110 : 64) }}>
                     {rows.slice(first, last).map((row, i) => (
-                      <SiteRow key={row.id} row={row} pick={picks.get(row.id)} turbo={turbo} top={slots.at[first + i] * STEP} leaving={leaving.has(row.id)} icon={siteIconMap?.[row.id]} onToggle={toggle} onFire={fire} onOpen={open} />
+                      <SiteRow key={row.id} row={row} pick={picks.get(row.id)} turbo={turbo} hold={isOpen ? `держи, чтобы закрыть ${shortName} и очистить` : "держи, чтобы очистить"} top={slots.at[first + i] * STEP} leaving={leaving.has(row.id)} icon={siteIconMap?.[row.id]} onToggle={toggle} onFire={fire} onOpen={open} />
                     ))}
                   </div>
                 )}

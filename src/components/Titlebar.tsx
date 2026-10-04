@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { updateReady } from "../lib/ipc";
+import { updateInstall, updateReady } from "../lib/ipc";
 import { Icon, Mark } from "./Icon";
 
-export function Titlebar({ path }: { path: string }) {
+export function Titlebar({ path, onError }: { path: string; onError: (message: string) => void }) {
   const [update, setUpdate] = useState(false);
   useEffect(() => {
     updateReady().then(setUpdate, () => {});
@@ -16,8 +16,12 @@ export function Titlebar({ path }: { path: string }) {
       <Mark />
       <b data-tauri-drag-region>Cache Out</b>
       <span className="path" data-tauri-drag-region>{path}</span>
-      {update && <span className="upd" data-tauri-drag-region>Обновление установится при закрытии</span>}
       <div className="wb">
+        {update && (
+          <button type="button" className="upd" aria-label="Обновить и перезапустить" title="Обновить и перезапустить" onClick={() => updateInstall().catch((e) => onError(String(e)))}>
+            <Icon name="update" />
+          </button>
+        )}
         <button type="button" aria-label="Свернуть" onClick={() => getCurrentWindow().minimize()}>
           <Icon name="min" />
         </button>

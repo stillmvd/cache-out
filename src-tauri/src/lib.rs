@@ -117,10 +117,10 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
-                updates::install(window.app_handle());
+                let _ = updates::install(window.app_handle(), false);
             }
         })
-        .invoke_handler(tauri::generate_handler![list_browsers, scan_profile, running_processes, clean_profile, site_icons, open_site, updates::update_ready])
+        .invoke_handler(tauri::generate_handler![list_browsers, scan_profile, running_processes, clean_profile, site_icons, open_site, updates::update_ready, updates::update_install])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

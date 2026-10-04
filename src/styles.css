@@ -107,11 +107,11 @@
   .tb .mk { flex: none; width: 18px; height: 18px; }
   .tb > b { font-size: 14px; }
   .tb .path { color: var(--dim); font-size: 13px; font-weight: 500; }
-  .tb .upd { margin-left: auto; color: var(--dim); font-size: 12px; font-weight: 500; }
-  .tb .upd + .wb { margin-left: 12px; }
   .tb .wb { margin-left: auto; display: flex; gap: 4px; color: var(--dim); }
   .tb .wb button { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; }
   .tb .wb button:hover { background: var(--raised); color: var(--fg); }
+  .tb .wb button.upd { width: 26px; height: 26px; margin: 3px; background: var(--sel); color: var(--sel-ink); transition: background-color var(--t-fast) var(--ease); }
+  .tb .wb button.upd:hover { background: color-mix(in srgb, var(--sel) 82%, #fff); color: var(--sel-ink); }
   .tb .wb button.x:hover { background: #c42b1c; color: #fff; }
 
   .body { flex: 1; min-height: 0; display: flex; gap: 8px; padding: 0 8px 8px; }

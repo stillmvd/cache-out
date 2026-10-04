@@ -21,6 +21,7 @@ export const scanProfile = (browserId: string, profileId: string) => invoke<Scan
 export const runningProcesses = () => invoke<string[]>("running_processes");
 export const openSite = (browserId: string, profileId: string, domain: string) => invoke<void>("open_site", { browserId, profileId, domain });
 export const updateReady = () => invoke<boolean>("update_ready");
+export const updateInstall = () => invoke<void>("update_install");
 export const siteIcons = (browserId: string, profileId: string) => invoke<Record<string, string>>("site_icons", { browserId, profileId });
 
 export type CleanRequest = { sites: Record<string, string[]>; profile: string[] };

@@ -253,11 +253,35 @@ pub fn clean_top_sites(db: &Connection, sites: &HashSet<&str>) -> rusqlite::Resu
     )
 }
 
-pub fn clean_favicons(db: &Connection, sites: &HashSet<&str>) -> rusqlite::Result<()> {
+pub fn bookmarked(profile: &Path) -> HashSet<String> {
+    fn walk(v: &serde_json::Value, out: &mut HashSet<String>) {
+        if let Some(url) = v.get("url").and_then(|u| u.as_str()) {
+            out.insert(url.to_string());
+        }
+        for c in v.get("children").and_then(|c| c.as_array()).into_iter().flatten() {
+            walk(c, out);
+        }
+    }
+    let mut out = HashSet::new();
+    for file in ["Bookmarks", "AccountBookmarks"] {
+        let Ok(v) = fs::read(profile.join(file)).map(|b| serde_json::from_slice::<serde_json::Value>(&b).unwrap_or_default()) else { continue };
+        for root in v.get("roots").and_then(|r| r.as_object()).into_iter().flat_map(|r| r.values()) {
+            walk(root, &mut out);
+        }
+    }
+    out
+}
+
+pub fn clean_favicons(db: &Connection, sites: &HashSet<&str>, keep: &HashSet<String>) -> rusqlite::Result<()> {
     if !has_table(db, "icon_mapping") {
         return Ok(());
     }
-    mark(db, "gone_im", &matching(db, "SELECT id, page_url FROM icon_mapping", sites, site_of_url)?)?;
+    let gone: Vec<i64> = {
+        let mut q = db.prepare("SELECT id, page_url FROM icon_mapping")?;
+        let rows = q.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?;
+        rows.flatten().filter(|(_, u)| !keep.contains(u) && site_of_url(u).is_some_and(|d| sites.contains(d.as_str()))).map(|(id, _)| id).collect()
+    };
+    mark(db, "gone_im", &gone)?;
     db.execute_batch(
         "DELETE FROM icon_mapping WHERE id IN (SELECT id FROM temp.gone_im);
          DELETE FROM favicon_bitmaps WHERE icon_id NOT IN (SELECT icon_id FROM icon_mapping WHERE icon_id IS NOT NULL);
@@ -335,8 +359,10 @@ fn run(profile: &Path, req: &CleanRequest, backup: &mut Backup) -> Result<u64, S
     }
 
     if !history.is_empty() {
-        let traces: [(&str, fn(&Connection, &HashSet<&str>) -> rusqlite::Result<()>); 3] =
-            [("Shortcuts", clean_shortcuts), ("Top Sites", clean_top_sites), ("Favicons", clean_favicons)];
+        let keep = bookmarked(profile);
+        let favicons = |db: &Connection, sites: &HashSet<&str>| clean_favicons(db, sites, &keep);
+        let traces: [(&str, &dyn Fn(&Connection, &HashSet<&str>) -> rusqlite::Result<()>); 3] =
+            [("Shortcuts", &clean_shortcuts), ("Top Sites", &clean_top_sites), ("Favicons", &favicons)];
         for (file, work) in traces {
             let path = profile.join(file);
             if path.is_file() {
@@ -846,13 +872,22 @@ mod tests {
         let sites = HashSet::from(["jutsu.love"]);
         clean_shortcuts(&db, &sites).unwrap();
         clean_top_sites(&db, &sites).unwrap();
-        clean_favicons(&db, &sites).unwrap();
+        clean_favicons(&db, &sites, &HashSet::from(["https://jutsu.love/b".to_string()])).unwrap();
         let q = |sql: &str| -> String { db.query_row(sql, [], |r| r.get(0)).unwrap() };
         assert_eq!(q("SELECT group_concat(id) FROM omni_box_shortcuts"), "b");
         assert_eq!(q("SELECT group_concat(url || url_rank, ' ') FROM (SELECT * FROM top_sites ORDER BY url_rank)"), "https://vk.com/0 https://ya.ru/1");
-        assert_eq!(q("SELECT group_concat(id) FROM icon_mapping"), "2,4");
+        assert_eq!(q("SELECT group_concat(id) FROM icon_mapping"), "2,3,4");
         assert_eq!(q("SELECT group_concat(id) FROM favicons"), "20,30");
         assert_eq!(q("SELECT group_concat(icon_id) FROM favicon_bitmaps"), "20,30");
+    }
+
+    #[test]
+    fn reads_bookmarks_from_local_and_account_files() {
+        let p = temp("bookmarks");
+        fs::write(p.join("Bookmarks"), r#"{"roots":{"bookmark_bar":{"children":[{"type":"url","url":"https://a.com/"}]}}}"#).unwrap();
+        fs::write(p.join("AccountBookmarks"), r#"{"roots":{"bookmark_bar":{"children":[{"type":"folder","children":[{"type":"url","url":"https://b.com/x"}]}]},"other":{"children":[]}}}"#).unwrap();
+        assert_eq!(bookmarked(&p), HashSet::from(["https://a.com/".to_string(), "https://b.com/x".to_string()]));
+        fs::remove_dir_all(&p).unwrap();
     }
 
     #[test]

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { cleanProfile, listBrowsers, openSite, runningProcesses, scanProfile, siteIcons, type Browser, type CleanError, type CleanReport, type CleanRequest, type Scan } from "./lib/ipc";
-import { allTotals, pickedKeys, profileRow, siteRow, sortRows, totals, type Key, type Pick, type Picks, type Row, type Sort } from "./lib/rows";
+import { allTotals, MODES, pickedKeys, profileRow, siteRow, sortRows, totals, valueOf, type Key, type Mode, type Pick, type Picks, type Row, type Sort } from "./lib/rows";
 import { mb } from "./lib/format";
 import { Titlebar } from "./components/Titlebar";
 import { BrowserNav } from "./components/BrowserNav";
-import { LEAVE_MS, SiteRow, type Target } from "./components/SiteRow";
-import { TotalsPanel } from "./components/TotalsPanel";
+import { LEAVE_MS, ModeRow, SiteRow, type Target } from "./components/SiteRow";
+import { ModePanel, TotalsPanel } from "./components/TotalsPanel";
 import { CloseDialog } from "./components/CloseDialog";
 import { Icon, Kbd } from "./components/Icon";
 
@@ -32,6 +32,7 @@ export default function App() {
   const [gone, setGone] = useState<Set<string>>(new Set());
   const [leaving, setLeaving] = useState<Set<string>>(new Set());
   const [turbo, setTurbo] = useState(false);
+  const [mode, setMode] = useState<Mode | null>(null);
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<Sort>("fresh");
   const [asking, setAsking] = useState(false);
@@ -122,6 +123,7 @@ export default function App() {
     if (!current) return;
     resetWork();
     setQuery("");
+    setMode(null);
     const k = keyOf(current);
     if (!scans.has(k) || dirty.current.has(k)) rescan(current);
   }, [current]);
@@ -129,7 +131,7 @@ export default function App() {
   useEffect(() => {
     listRef.current?.scrollTo({ top: 0 });
     setScrollTop(0);
-  }, [current, query, sort]);
+  }, [current, query, sort, mode]);
 
   useEffect(() => {
     if (!toast) return;
@@ -167,9 +169,34 @@ export default function App() {
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const sites = sortRows(liveRows.filter((r) => !r.prof && (!q || r.title.includes(q))), sort);
-    return q ? sites : [...liveRows.filter((r) => r.prof), ...sites];
-  }, [liveRows, query, sort]);
+    const sites = sortRows(liveRows.filter((r) => !r.prof && (!q || r.title.includes(q)) && (!mode || valueOf(r, mode) > 0 || leaving.has(r.id))), sort, mode);
+    return q || mode ? sites : [...liveRows.filter((r) => r.prof), ...sites];
+  }, [liveRows, query, sort, mode, leaving]);
+
+  const modeCounts = useMemo(() => new Map(MODES.map((m) => [m.key, liveRows.filter((r) => !r.prof && valueOf(r, m.key) > 0).length])), [liveRows]);
+  const modeMeta = MODES.find((m) => m.key === mode);
+  const modeTotals = useMemo(() => {
+    if (!mode) return null;
+    const of = liveRows.filter((r) => !r.prof && valueOf(r, mode) > 0);
+    const picked = of.filter((r) => picks.has(r.id));
+    const sum = (list: Row[]) => list.reduce((a, r) => a + valueOf(r, mode), 0);
+    return { value: sum(picked), all: sum(of), sites: picked.length, of: of.length };
+  }, [mode, liveRows, picks]);
+  const isLeaving = useCallback((r: Row) => leaving.has(r.id) && (mode !== null || r.items.every((i) => !i.value)), [leaving, mode]);
+  const pickable = useMemo(() => rows.filter((r) => !leaving.has(r.id)), [rows, leaving]);
+  const allPicked = pickable.length > 0 && pickable.every((r) => picks.has(r.id));
+  const pickAll = useCallback(() => {
+    if (!mode) return;
+    setPicks((prev) => {
+      const next = new Map(prev);
+      pickable.forEach((r) => (allPicked ? next.delete(r.id) : next.set(r.id, new Set([mode]))));
+      return next;
+    });
+  }, [mode, pickable, allPicked]);
+  const enterMode = useCallback((m: Mode | null) => {
+    setPicks(new Map());
+    setMode(m);
+  }, []);
 
   const t = useMemo(() => totals(liveRows, picks), [liveRows, picks]);
   const all = useMemo(() => allTotals(baseRows), [baseRows]);
@@ -205,6 +232,7 @@ export default function App() {
     async (targets: Map<string, Pick>, close = false, restorePicks = true) => {
       if (!current) return;
       const leave: string[] = [];
+      const fade: string[] = [];
       const done = new Map<string, Set<Key>>();
       const request: CleanRequest = { sites: {}, profile: [] };
       for (const [id, pick] of targets) {
@@ -216,6 +244,7 @@ export default function App() {
         if (row.prof) request.profile = [...keys];
         else request.sites[id] = [...keys];
         if (!row.prof && row.items.every((i) => !i.value || keys.has(i.key))) leave.push(id);
+        else if (mode && keys.has(mode)) fade.push(id);
       }
       if (!done.size) return;
       const k = keyOf(current);
@@ -235,11 +264,12 @@ export default function App() {
         return next;
       });
       let leaveTimer = 0;
-      if (leave.length) {
-        setLeaving((s) => new Set([...s, ...leave]));
+      const out = [...leave, ...fade];
+      if (out.length) {
+        setLeaving((s) => new Set([...s, ...out]));
         leaveTimer = window.setTimeout(() => {
           setGone((g) => new Set([...g, ...leave]));
-          setLeaving((s) => new Set([...s].filter((x) => !leave.includes(x))));
+          setLeaving((s) => new Set([...s].filter((x) => !out.includes(x))));
         }, LEAVE_MS);
         timers.current.push(leaveTimer);
       }
@@ -256,7 +286,7 @@ export default function App() {
           if (currentKey.current === k) rescan(current);
         } else if (currentKey.current === k) {
           window.clearTimeout(leaveTimer);
-          setLeaving((s) => new Set([...s].filter((x) => !leave.includes(x))));
+          setLeaving((s) => new Set([...s].filter((x) => !out.includes(x))));
           setGone((g) => new Set([...g].filter((x) => !leave.includes(x))));
           setCleared((prev) => {
             const next = new Map(prev);
@@ -279,7 +309,7 @@ export default function App() {
       setToast(synced ? `${head}\nСинхронизация ${shortName} может вернуть историю и входы` : head);
       if (currentKey.current === k) setFreed((f) => f + report.freedBytes);
     },
-    [current, liveRows, shortName, rescan, scan, isOpen],
+    [current, liveRows, shortName, rescan, scan, isOpen, mode],
   );
 
   const open = useCallback(
@@ -315,6 +345,7 @@ export default function App() {
       } else if (e.key === "Escape") {
         if (picks.size) setPicks(new Map());
         else if (query) setQuery("");
+        else if (mode) setMode(null);
       } else if (e.key === "Delete" && document.activeElement !== searchRef.current) {
         clean();
       } else if (e.key === "F5") {
@@ -324,18 +355,19 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [asking, picks, query, clean, current, rescan]);
+  }, [asking, picks, query, mode, clean, current, rescan]);
 
   const slots = useMemo(() => {
     let count = 0;
-    const at = rows.map((r) => (leaving.has(r.id) ? count : count++));
+    const at = rows.map((r) => (isLeaving(r) ? count : count++));
     return { at, count };
-  }, [rows, leaving]);
+  }, [rows, isLeaving]);
   const first = Math.max(0, Math.floor(scrollTop / STEP) - 4);
   const last = Math.min(rows.length, Math.ceil((scrollTop + viewH) / STEP) + 4);
   const panel = t.items > 0 && !turbo;
   const sortLabel = SORTS.find(([s]) => s === sort)?.[1] ?? "";
-  const profileName = browser?.profiles.find((p) => p.id === current?.profile)?.name ?? "";
+  const hold = isOpen ? `держи, чтобы закрыть ${shortName} и очистить` : "держи, чтобы очистить";
+  const profileName =browser?.profiles.find((p) => p.id === current?.profile)?.name ?? "";
 
   return (
     <div className="app">
@@ -351,7 +383,8 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  Сайты <b>{ready ? siteCount : "—"}</b>
+                  Сайты {modeMeta && `${modeMeta.with} `}
+                  <b>{!ready ? "—" : mode ? modeCounts.get(mode) : siteCount}</b>
                 </>
               )}
             </h2>
@@ -418,6 +451,15 @@ export default function App() {
                   </span>
                 </div>
               )}
+              <div className="tabs" role="group" aria-label="Что чистить">
+                {[{ key: null, label: "Всё", icon: "", n: siteCount }, ...MODES.map((m) => ({ ...m, n: modeCounts.get(m.key) ?? 0 }))].map((tab) => (
+                  <button key={tab.label} type="button" aria-pressed={mode === tab.key} className={mode === tab.key ? "on" : ""} onClick={() => mode !== tab.key && enterMode(tab.key)}>
+                    {tab.icon && <Icon name={tab.icon} />}
+                    {tab.label}
+                    <span className="n">{tab.n}</span>
+                  </button>
+                ))}
+              </div>
               <div className="tools">
                 <label className="search">
                   <Icon name="search" />
@@ -429,26 +471,48 @@ export default function App() {
                   <Icon name="down" />
                 </button>
               </div>
+              {modeMeta && rows.length > 0 && (
+                <div className="lh">
+                  <span>
+                    {query.trim() ? `Найдено ${rows.length}` : `Сайты ${modeMeta.with}`} · {sortLabel.toLowerCase()}
+                  </span>
+                  <button type="button" className="link" onClick={pickAll}>
+                    {allPicked ? "Снять все" : `Выбрать все ${pickable.length}`}
+                  </button>
+                </div>
+              )}
               <div className="list" ref={listRef} onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}>
                 {rows.length === 0 ? (
                   <div className="empty">
-                    <h3>
-                      Сайтов с «<b>{query}</b>» нет
-                    </h3>
-                    <span>Поиск идёт по домену.</span>
+                    {query.trim() ? (
+                      <>
+                        <h3>
+                          Сайтов с «<b>{query}</b>»{modeMeta && ` ${modeMeta.with}`} нет
+                        </h3>
+                        <span>Поиск идёт по домену.</span>
+                      </>
+                    ) : (
+                      <h3>
+                        Сайтов <b>{modeMeta?.with}</b> нет
+                      </h3>
+                    )}
                   </div>
                 ) : (
                   <div className={`list-inner${leaving.size ? " shifting" : ""}`} style={{ height: slots.count * STEP + (panel ? 110 : 64) }}>
-                    {rows.slice(first, last).map((row, i) => (
-                      <SiteRow key={row.id} row={row} pick={picks.get(row.id)} turbo={turbo} hold={isOpen ? `держи, чтобы закрыть ${shortName} и очистить` : "держи, чтобы очистить"} top={slots.at[first + i] * STEP} leaving={leaving.has(row.id)} icon={siteIconMap?.[row.id]} onToggle={toggle} onFire={fire} onOpen={open} />
-                    ))}
+                    {rows.slice(first, last).map((row, i) =>
+                      modeMeta ? (
+                        <ModeRow key={row.id} row={row} mode={modeMeta.key} label={modeMeta.label} on={picks.has(row.id)} turbo={turbo} hold={hold} top={slots.at[first + i] * STEP} leaving={isLeaving(row)} icon={siteIconMap?.[row.id]} onToggle={toggle} onFire={fire} />
+                      ) : (
+                        <SiteRow key={row.id} row={row} pick={picks.get(row.id)} turbo={turbo} hold={hold} top={slots.at[first + i] * STEP} leaving={isLeaving(row)} icon={siteIconMap?.[row.id]} onToggle={toggle} onFire={fire} onOpen={open} />
+                      ),
+                    )}
                   </div>
                 )}
               </div>
             </>
           )}
 
-          {panel && <TotalsPanel t={t} all={all} browserName={shortName} onClean={clean} />}
+          {panel && (modeMeta && modeTotals ? <ModePanel mode={modeMeta} t={modeTotals} onClean={clean} /> : <TotalsPanel t={t} all={all} browserName={shortName} onClean={clean} />)}
           {toast && (
             <div className="toast" role="status">
               {toast.split("\n").map((line, i) => (

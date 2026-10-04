@@ -152,7 +152,16 @@
   .turbo.on .sw::after { translate: 14px 0; background: var(--pri-ink); }
   .turbo:disabled { opacity: 0.45; cursor: not-allowed; }
 
+  .tabs { flex: none; display: flex; gap: 22px; padding: 0 4px; overflow-x: auto; scrollbar-width: none; box-shadow: inset 0 -1px 0 var(--line); }
+  .tabs button { display: inline-flex; align-items: center; gap: 7px; height: 38px; color: var(--dim); font-size: 13.5px; font-weight: 500; box-shadow: inset 0 0 0 transparent; transition: color var(--t-fast) var(--ease), box-shadow var(--t-mid) var(--ease); }
+  .tabs button:hover { color: var(--fg); }
+  .tabs .ic { width: 15px; height: 15px; }
+  .tabs .n { font-size: 12px; font-variant-numeric: tabular-nums; opacity: 0.8; }
+  .tabs button.on { color: var(--fg); font-weight: 700; box-shadow: inset 0 -2.5px 0 var(--sel); }
   .tools { flex: none; display: flex; align-items: center; gap: 8px; }
+  .lh { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 12px; color: var(--dim); font-size: 12px; font-weight: 500; white-space: nowrap; }
+  .lh .link { color: var(--sel); font-size: 13px; font-weight: 700; }
+  .lh .link:hover { text-decoration: underline 1.5px; text-underline-offset: 3px; }
   .search { flex: 1; max-width: 320px; display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 8px 0 14px; border-radius: 999px; background: var(--raised); color: var(--dim); }
   .search input { flex: 1; min-width: 0; color: var(--fg); font-size: 14px; }
   .search input::placeholder { color: var(--dim); }
@@ -180,6 +189,16 @@
   .rw .dom.link:hover svg, .rw .dom.link:focus-visible svg { opacity: 1; }
   .rw .sub { overflow: hidden; color: var(--dim); font-size: 12px; white-space: nowrap; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
   .chips { flex: none; display: flex; gap: 6px; }
+  .rw.mode { width: auto; text-align: left; }
+  .rw.mode:hover { background: color-mix(in srgb, var(--fg) 6%, var(--raised)); }
+  .rw.mode.on { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sel) 45%, transparent); }
+  .rw .chk { position: relative; flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; box-shadow: inset 0 0 0 1.5px var(--strong); transition: background-color var(--t-fast) var(--ease), box-shadow var(--t-fast) var(--ease); }
+  .rw .chk .ic { width: 14px; height: 14px; }
+  .rw .chk.on { background: var(--sel); box-shadow: none; color: var(--sel-ink); }
+  .rw .chk.holding::before { content: ""; position: absolute; inset: -4px; border-radius: 10px; padding: 2px; background: conic-gradient(var(--pri) var(--p), transparent 0); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; animation: hold-fill var(--hold) linear forwards; }
+  .rw .mv { flex: none; display: flex; align-items: baseline; gap: 5px; padding-right: 8px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .rw .mv b { font-size: 16px; }
+  .rw .mv span { color: var(--dim); font-size: 12px; }
   .rw.leaving > :not(.bits) { animation: rw-fade 700ms var(--ease) forwards; }
   .rw.leaving { z-index: 1; pointer-events: none; animation: rw-bg 700ms var(--ease) forwards; }
   .list-inner.shifting .rw { transition: transform 420ms var(--ease); }
@@ -209,6 +228,7 @@
   .pn .cat .t span { overflow: hidden; text-overflow: ellipsis; }
   .pn .cat b { overflow: hidden; font-size: 15px; white-space: nowrap; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
   .pn .cat.z b { color: var(--dim); font-weight: 500; }
+  .pn .cat b .of { color: var(--dim); font-size: 12px; font-weight: 500; }
   .meter { height: 4px; border-radius: 999px; background: color-mix(in srgb, var(--fg) 12%, transparent); overflow: hidden; }
   .meter i { display: block; height: 100%; border-radius: inherit; background: var(--sel); transition: width var(--t-slow) var(--ease); }
   .pn .sum { display: flex; flex-direction: column; align-items: flex-end; padding: 0 10px 0 14px; box-shadow: inset 1px 0 0 var(--line); white-space: nowrap; }

@@ -1,5 +1,6 @@
-import { memo, useEffect, useRef, useState, type CSSProperties } from "react";
-import { pickedKeys, type Item, type Key, type Pick, type Row } from "../lib/rows";
+import { memo, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { bytes, pickedKeys, unitOf, valueOf, type Item, type Key, type Mode, type Pick, type Row } from "../lib/rows";
+import { mbShort, nf } from "../lib/format";
 import { BrowserGlyph, Icon } from "./Icon";
 
 export const HOLD_MS = 600;
@@ -17,7 +18,7 @@ type CubeProps = {
   onFire: () => void;
 };
 
-function Cube({ icon, short, title, state, disabled, turbo, onToggle, onFire }: CubeProps) {
+function useHold(turbo: boolean, disabled: boolean, onFire: () => void) {
   const [holding, setHolding] = useState(false);
   const timer = useRef(0);
   const live = useRef({ turbo, disabled, onFire });
@@ -36,6 +37,27 @@ function Cube({ icon, short, title, state, disabled, turbo, onToggle, onFire }: 
     window.clearTimeout(timer.current);
     setHolding(false);
   };
+  return {
+    holding,
+    handlers: {
+      onPointerDown: (e: ReactPointerEvent) => e.button === 0 && e.isPrimary && start(),
+      onPointerUp: cancel,
+      onPointerLeave: cancel,
+      onPointerCancel: cancel,
+      onBlur: cancel,
+      onKeyDown: (e: ReactKeyboardEvent) => {
+        if (turbo && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          if (!e.repeat) start();
+        }
+      },
+      onKeyUp: (e: ReactKeyboardEvent) => (e.key === "Enter" || e.key === " ") && cancel(),
+    },
+  };
+}
+
+function Cube({ icon, short, title, state, disabled, turbo, onToggle, onFire }: CubeProps) {
+  const { holding, handlers } = useHold(turbo, disabled, onFire);
   return (
     <button
       type="button"
@@ -46,18 +68,7 @@ function Cube({ icon, short, title, state, disabled, turbo, onToggle, onFire }: 
       aria-label={title}
       aria-pressed={turbo ? undefined : state !== ""}
       onClick={() => !turbo && onToggle()}
-      onPointerDown={(e) => e.button === 0 && e.isPrimary && start()}
-      onPointerUp={cancel}
-      onPointerLeave={cancel}
-      onPointerCancel={cancel}
-      onBlur={cancel}
-      onKeyDown={(e) => {
-        if (turbo && (e.key === "Enter" || e.key === " ")) {
-          e.preventDefault();
-          if (!e.repeat) start();
-        }
-      }}
-      onKeyUp={(e) => (e.key === "Enter" || e.key === " ") && cancel()}
+      {...handlers}
     >
       <Icon name={icon} />
       {short && <b>{short}</b>}
@@ -149,5 +160,55 @@ export const SiteRow = memo(function SiteRow({ row, pick, turbo, hold, top, leav
       </span>
       {leaving && <Bits />}
     </div>
+  );
+});
+
+type ModeProps = {
+  row: Row;
+  mode: Mode;
+  label: string;
+  on: boolean;
+  turbo: boolean;
+  hold: string;
+  top: number;
+  leaving: boolean;
+  icon?: string;
+  onToggle: (row: Row, target: Target) => void;
+  onFire: (row: Row, target: Target) => void;
+};
+
+export const ModeRow = memo(function ModeRow({ row, mode, label, on, turbo, hold, top, leaving, icon, onToggle, onFire }: ModeProps) {
+  const v = valueOf(row, mode);
+  const { holding, handlers } = useHold(turbo, leaving || !v, () => onFire(row, mode));
+  const amount = bytes(mode) ? mbShort(v) : nf(v);
+  const title = turbo ? `${label} у ${row.title} — ${hold}` : `${label} у ${row.title}`;
+  return (
+    <button
+      type="button"
+      className={`rw mode${on ? " on" : ""}${leaving ? " leaving" : ""}`}
+      style={{ transform: `translateY(${top}px)`, "--hold": `${HOLD_MS}ms` } as CSSProperties}
+      role={turbo ? undefined : "checkbox"}
+      aria-checked={turbo ? undefined : on}
+      title={title}
+      disabled={leaving}
+      onClick={() => !turbo && onToggle(row, mode)}
+      {...handlers}
+    >
+      <span className="who">
+        <span className={`chk${on ? " on" : ""}${holding ? " holding" : ""}`}>{on && <Icon name="check" />}</span>
+        <span className="fav">
+          <Fav row={row} icon={icon} />
+        </span>
+        <span className="txt">
+          <span className="dom">{row.title}</span>
+          <span className="sub">{row.sub}</span>
+        </span>
+      </span>
+      <span className="mv">
+        <b>{v ? amount : ""}</b>
+        {!bytes(mode) && v > 0 && <span>{unitOf(mode, v)}</span>}
+      </span>
+      {leaving && <Bits />}
+    </button>
   );
 });

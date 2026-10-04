@@ -8,8 +8,20 @@ export type Pick = Set<Key> | "all";
 export type Picks = Map<string, Pick>;
 export type Sort = "fresh" | "heavy" | "name";
 
+export type Mode = "c" | "s" | "k" | "d" | "h";
+
 export const PROFILE_ROW = "__profile__";
-const bytes = (k: Key) => k === "s" || k === "k" || k === "bc";
+export const MODES: { key: Mode; label: string; icon: string; with: string; what: string }[] = [
+  { key: "c", label: "Куки", icon: "cookie", with: "с куки", what: "куки" },
+  { key: "s", label: "Хранилище", icon: "storage", with: "с хранилищем", what: "хранилище" },
+  { key: "k", label: "Кеш сайта", icon: "layers", with: "с кешем", what: "кеш" },
+  { key: "d", label: "Загрузки", icon: "download", with: "с загрузками", what: "загрузки" },
+  { key: "h", label: "История", icon: "history", with: "с историей", what: "историю" },
+];
+export const bytes = (k: Key) => k === "s" || k === "k" || k === "bc";
+export const valueOf = (row: Row, k: Key) => row.items.find((i) => i.key === k)?.value ?? 0;
+export const unitOf = (k: Key, v: number) =>
+  k === "c" ? "куки" : k === "h" ? plural(v, ["визит", "визита", "визитов"]) : k === "d" ? plural(v, ["загрузка", "загрузки", "загрузок"]) : "";
 const shortOf = (k: Key, v: number) => (bytes(k) ? mbShort(v) : nf(v));
 
 function item(key: Key, label: string, icon: string, value: number): Item {
@@ -57,10 +69,11 @@ export function profileRow(browserId: string, browserName: string, scan: Scan): 
   };
 }
 
-export function sortRows(rows: Row[], sort: Sort) {
+export function sortRows(rows: Row[], sort: Sort, mode: Mode | null = null) {
   const r = [...rows];
-  if (sort === "fresh") r.sort((a, b) => (b.last ?? 0) - (a.last ?? 0) || b.weight - a.weight);
-  if (sort === "heavy") r.sort((a, b) => b.weight - a.weight || (b.last ?? 0) - (a.last ?? 0));
+  const w = (x: Row) => (mode ? valueOf(x, mode) : x.weight);
+  if (sort === "fresh") r.sort((a, b) => (b.last ?? 0) - (a.last ?? 0) || w(b) - w(a));
+  if (sort === "heavy") r.sort((a, b) => w(b) - w(a) || (b.last ?? 0) - (a.last ?? 0));
   if (sort === "name") r.sort((a, b) => a.title.localeCompare(b.title));
   return r;
 }

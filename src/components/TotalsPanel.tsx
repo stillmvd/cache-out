@@ -1,4 +1,4 @@
-import type { Totals } from "../lib/rows";
+import { bytes, type MODES, type Totals } from "../lib/rows";
 import { mb, nf, plural } from "../lib/format";
 import { Icon, Kbd } from "./Icon";
 
@@ -35,6 +35,37 @@ export function TotalsPanel({ t, all, browserName, onClean }: { t: Totals; all: 
       </div>
       <button type="button" className="btn" onClick={onClean}>
         Очистить <Kbd k="Del" />
+      </button>
+    </div>
+  );
+}
+
+type ModeTotals = { value: number; all: number; sites: number; of: number };
+
+export function ModePanel({ mode, t, onClean }: { mode: (typeof MODES)[number]; t: ModeTotals; onClean: () => void }) {
+  const fmt = (v: number) => (bytes(mode.key) ? mb(v) : nf(v));
+  return (
+    <div className="pn" role="region" aria-label="Итог выбора">
+      <div className="cat">
+        <span className="t">
+          <Icon name={mode.icon} />
+          <span>{mode.label}</span>
+        </span>
+        <b>
+          {fmt(t.value)} <span className="of">из {fmt(t.all)}</span>
+        </b>
+        <span className="meter">
+          <i style={{ width: `${pct(t.value, t.all)}%` }} />
+        </span>
+      </div>
+      <div className="sum">
+        <b>
+          {t.sites} из {t.of}
+        </b>
+        <span>{plural(t.of, ["сайта", "сайтов", "сайтов"])} выбрано</span>
+      </div>
+      <button type="button" className="btn" onClick={onClean}>
+        Очистить {mode.what} <Kbd k="Del" />
       </button>
     </div>
   );

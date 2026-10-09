@@ -140,7 +140,7 @@ pub fn scan(profile: &Path) -> std::io::Result<ProfileScan> {
     out.sync = sync_enabled(profile);
     out.cache_bytes = cache_dirs(profile).iter().map(|d| dir_size(d)).sum();
     out.sites = sites.0.into_values().collect();
-    out.sites.sort_by(|a, b| b.last_visit.max(b.last_cookie_access).cmp(&a.last_visit.max(a.last_cookie_access)));
+    out.sites.sort_by_key(|s| std::cmp::Reverse(s.last_visit.max(s.last_cookie_access)));
     Ok(out)
 }
 

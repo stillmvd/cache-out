@@ -238,6 +238,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tauri-plugin-ship",
  "tauri-plugin-updater",
  "url",
  "windows-sys 0.59.0",
@@ -3711,6 +3712,17 @@ dependencies = [
  "serde_json",
  "tauri-utils",
  "walkdir",
+]
+
+[[package]]
+name = "tauri-plugin-ship"
+version = "0.1.1"
+source = "git+https://github.com/stillmvd/tauri-ship?tag=v0.1.1#3c6b49eabd205b269355e927a6b1940936fd700d"
+dependencies = [
+ "serde",
+ "tauri",
+ "tauri-plugin",
+ "tauri-plugin-updater",
 ]
 
 [[package]]

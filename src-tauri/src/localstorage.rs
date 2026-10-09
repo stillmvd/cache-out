@@ -87,9 +87,15 @@ mod tests {
         assert_eq!(sizes["google.com"], (26 + 5) + (27 + 1));
         assert_eq!(sizes["vk.com"], 18 + 3);
         let mut called = 0;
-        assert_eq!(delete_sites(&dir, &HashSet::from(["nothing.org"]), || Ok(called += 1)).unwrap(), 0);
+        assert_eq!(delete_sites(&dir, &HashSet::from(["nothing.org"]), || {
+            called += 1;
+            Ok(())
+        }).unwrap(), 0);
         assert_eq!(called, 0);
-        assert_eq!(delete_sites(&dir, &HashSet::from(["google.com"]), || Ok(called += 1)).unwrap(), 4);
+        assert_eq!(delete_sites(&dir, &HashSet::from(["google.com"]), || {
+            called += 1;
+            Ok(())
+        }).unwrap(), 4);
         assert_eq!(called, 1);
         let mut db = open(&dir).unwrap();
         assert!(db.get(b"_https://www.google.com\x00\x01k").is_none());

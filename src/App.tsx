@@ -3,6 +3,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { cleanProfile, listBrowsers, openSite, runningProcesses, scanProfile, siteIcons, type Browser, type CleanError, type CleanReport, type CleanRequest, type Scan } from "./lib/ipc";
 import { allTotals, MODES, pickedKeys, profileRow, siteRow, sortRows, totals, valueOf, type Key, type Mode, type Pick, type Picks, type Row, type Sort } from "./lib/rows";
 import { mb } from "./lib/format";
+import { UpdateToast } from "@stillmvd/tauri-ship";
 import { Titlebar } from "./components/Titlebar";
 import { BrowserNav } from "./components/BrowserNav";
 import { LEAVE_MS, ModeRow, SiteRow, type Target } from "./components/SiteRow";
@@ -371,7 +372,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Titlebar onError={setToast} path={!browser ? "" : browser.profiles.length > 1 ? `${shortName} · ${profileName}` : shortName} />
+      <Titlebar path={!browser ? "" : browser.profiles.length > 1 ? `${shortName} · ${profileName}` : shortName} />
       <div className="body" inert={asking || undefined}>
         <BrowserNav browsers={browsers} current={current} counts={counts} running={running} onPick={(b, p) => setCurrent({ browser: b, profile: p })} />
         <section className="panel main" style={{ "--toast-bottom": panel ? "112px" : "16px" } as CSSProperties}>
@@ -522,6 +523,7 @@ export default function App() {
           )}
         </section>
       </div>
+      <UpdateToast lang="ru" />
       {asking && <CloseDialog browserName={shortName} items={t.items} onCancel={cancelAsk} onConfirm={confirmAsk} />}
     </div>
   );

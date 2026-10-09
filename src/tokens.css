@@ -45,3 +45,17 @@
   --dim: #56565e;
   --shadow: rgb(0 0 0 / 12%);
 }
+
+:root {
+  --ship-bg: var(--ground);
+  --ship-fg: var(--fg);
+  --ship-muted: var(--dim);
+  --ship-accent: var(--sel);
+  --ship-accent-hover: color-mix(in srgb, var(--sel) 82%, #fff);
+  --ship-accent-fg: var(--sel-ink);
+  --ship-accent-soft: color-mix(in srgb, var(--sel) 18%, transparent);
+  --ship-warn: var(--pri);
+  --ship-hover: var(--raised);
+  --ship-border: var(--line);
+  --ship-radius: 20px;
+}

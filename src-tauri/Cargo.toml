@@ -19,7 +19,8 @@ psl = "2"
 url = "2"
 base64 = "0.22"
 rusty-leveldb = "4.0.1"
-tauri-plugin-updater = "2"
+tauri-plugin-updater = "2.13"
+tauri-plugin-ship = { git = "https://github.com/stillmvd/tauri-ship", tag = "v0.1.1" }
 
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }

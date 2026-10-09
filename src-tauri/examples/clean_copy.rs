@@ -1,8 +1,8 @@
 use cache_out_lib::clean::{clean_profile, CleanRequest, Key};
 use cache_out_lib::model::Family;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-fn show(label: &str, p: &PathBuf, domain: &str) {
+fn show(label: &str, p: &Path, domain: &str) {
     let s = if p.join("places.sqlite").is_file() { cache_out_lib::firefox::scan(p) } else { cache_out_lib::chromium::scan(p) }.expect("scan");
     match s.sites.iter().find(|x| x.domain == domain) {
         Some(x) => println!("{label}: куки {} · адресов {} · визитов {} · загрузок {} · хранилище {} Б · кеш сайта {} Б", x.cookies, x.history_urls, x.visits, x.downloads, x.storage_bytes, x.site_cache_bytes),

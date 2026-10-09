@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+type TraceFn<'a> = dyn Fn(&Connection, &HashSet<&str>) -> rusqlite::Result<()> + 'a;
+
 const KEEP_SECS: u64 = 7 * 24 * 3600;
 static NEXT: AtomicU32 = AtomicU32::new(0);
 const ADDRESS_TABLES: &[&str] = &[
@@ -361,7 +363,7 @@ fn run(profile: &Path, req: &CleanRequest, backup: &mut Backup) -> Result<u64, S
     if !history.is_empty() {
         let keep = bookmarked(profile);
         let favicons = |db: &Connection, sites: &HashSet<&str>| clean_favicons(db, sites, &keep);
-        let traces: [(&str, &dyn Fn(&Connection, &HashSet<&str>) -> rusqlite::Result<()>); 3] =
+        let traces: [(&str, &TraceFn); 3] =
             [("Shortcuts", &clean_shortcuts), ("Top Sites", &clean_top_sites), ("Favicons", &favicons)];
         for (file, work) in traces {
             let path = profile.join(file);
@@ -403,8 +405,7 @@ fn run(profile: &Path, req: &CleanRequest, backup: &mut Backup) -> Result<u64, S
             let db = step("Хранилище", open(&quota))?;
             let mut q = step("Хранилище", db.prepare("SELECT id, storage_key FROM buckets"))?;
             let rows = step("Хранилище", q.query_map([], |r| Ok((r.get(0)?, r.get(1)?))))?;
-            let found = rows.flatten().filter_map(|(id, key): (i64, String)| site_of_origin(&key).map(|d| (id, d))).collect();
-            found
+            rows.flatten().filter_map(|(id, key): (i64, String)| site_of_origin(&key).map(|d| (id, d))).collect()
         };
         let mut gone = vec![];
         for (id, domain) in buckets {

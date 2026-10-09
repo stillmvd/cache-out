@@ -104,14 +104,22 @@ impl Backup<'_> {
     fn take(&mut self, src: &Path) -> io::Result<u64> {
         let size = if src.is_dir() { dir_size(src) } else { src.metadata()?.len() };
         let dst = self.target(src)?;
-        match fs::rename(src, &dst) {
-            Err(e) if e.raw_os_error() == Some(17) => {
-                copy_tree(src, &dst)?;
-                if src.is_dir() { fs::remove_dir_all(src) } else { fs::remove_file(src) }?;
+        let mut tries = 0;
+        loop {
+            match fs::rename(src, &dst) {
+                Err(e) if e.raw_os_error() == Some(17) => {
+                    copy_tree(src, &dst)?;
+                    if src.is_dir() { fs::remove_dir_all(src) } else { fs::remove_file(src) }?;
+                }
+                Err(e) if e.kind() == io::ErrorKind::PermissionDenied && tries < 10 => {
+                    tries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    continue;
+                }
+                r => r?,
             }
-            r => r?,
+            return Ok(size);
         }
-        Ok(size)
     }
 }
 
